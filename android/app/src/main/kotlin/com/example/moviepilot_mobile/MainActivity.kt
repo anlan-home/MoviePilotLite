@@ -18,6 +18,16 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        // ── 内嵌播放器(lanplayer_player)原生插件 ──
+        // ExoPlayer + FFmpeg 音频扩展(视频渲染/音频软解兜底)
+        flutterEngine.plugins.add(ExoFFmpegPlugin())
+        // libass ASS/SSA 特效字幕渲染
+        flutterEngine.plugins.add(LibassPlugin())
+        // 音频输出能力探测(环绕声检测)
+        flutterEngine.plugins.add(AudioCapabilityPlugin())
+        // ISO 原盘原生直连(libudfread)
+        flutterEngine.plugins.add(IsoPlugin())
+        // ── 应用更新热更新通道 ──
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, appUpdateChannel).setMethodCallHandler { call, result ->
             when (call.method) {
                 "installApk" -> {
