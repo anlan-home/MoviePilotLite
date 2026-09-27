@@ -1,7 +1,13 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:get/get.dart';
 import 'package:lanplayer_player/lanplayer_player.dart' as kit;
 
 import '../../../applog/app_log.dart';
+import '../models/player_play_request.dart';
 import '../../../services/api_client.dart';
 import '../../../services/app_service.dart';
 import '../../../utils/open_url.dart';
@@ -65,6 +71,12 @@ class PlayerLaunchController extends GetxService {
   /// 探测结果缓存,键为 mtype|tmdb|season|title
   final Map<String, PlayProbe?> _probeCache = {};
 
+  bool _accountHintShown = false;
+
+  /// 可用地址解析缓存:serverName -> 选中的地址 + 当时的网络指纹
+  final Map<String, String> _resolvedUrl = {};
+  final Map<String, String> _resolvedFp = {};
+
   ResumeContext? resumeContextFor(String? pathKey) =>
       pathKey == null ? null : resumeContexts[pathKey];
 
@@ -120,8 +132,18 @@ class PlayerLaunchController extends GetxService {
     _enabledCache = null;
   }
 
-  /// MP 服务器配置 → kit MediaServer(优先外网播放地址)
-  kit.MediaServer? toKitServer(MediaServer s, {bool isDefault = false}) {
+  /// MP 服务器配置 → kit MediaServer。
+  /// 地址自动选择:内网地址可直连则用内网(更快、不占宽带上行),
+  /// 内网不可达时自动回退外网播放地址;结果按网络指纹缓存,换网自动重判。
+  Future<kit.MediaServer?> toKitServer(
+    MediaServer s, {
+    bool isDefault = false,
+  }) async {
+    // 配置未加载时先拉取:否则本次构造会拿到空的 apiKey/username,
+    // 产生一个"无凭据"的实例(日志中的 hasKey=false),与后续实例分裂。
+    if (_rawConfigByName.isEmpty) {
+      await enabledServers();
+    }
     final raw = _rawConfigByName[s.name] ?? const <String, dynamic>{};
     String cfgOf(List<String> keys) {
       for (final k in keys) {
@@ -133,14 +155,24 @@ class PlayerLaunchController extends GetxService {
 
     // MP 服务端的键名是 api_key;兼容 apikey 与 token 变体
     final apiKey = cfgOf(['api_key', 'apikey', 'token']);
-    final username = cfgOf(['username', 'user']);
-    final password = cfgOf(['password']);
+    var username = cfgOf(['username', 'user']);
+    var password = cfgOf(['password']);
+    // 优先用 App 内配置的本机账号(用户令牌登录,播放进度才会被服务端接受)
+    final account = await loadAccount(s.name);
+    if (account != null) {
+      if (account.username.isNotEmpty) username = account.username;
+      password = account.password;
+    }
     final playHost = cfgOf(['play_host', 'play_url']);
     final host = cfgOf(['host', 'url']);
-    final url = playHost.isNotEmpty ? playHost : host;
-    if (url.isEmpty) return null;
+    final url = await _resolveUsableUrl(
+      s.name,
+      lan: host,
+      wan: playHost,
+    );
+    if (url == null || url.isEmpty) return null;
     _log.warning(
-        'MediaServers[${s.name}] keys=${raw.keys.toList()} hasKey=${apiKey.isNotEmpty}');
+        'MediaServers[${s.name}] keys=${raw.keys.toList()} hasKey=${apiKey.isNotEmpty} url=$url');
     return kit.MediaServer(
       id: s.name,
       name: s.name,
@@ -158,15 +190,25 @@ class PlayerLaunchController extends GetxService {
       _serviceFor(server);
 
   kit.MediaServerService? _serviceFor(kit.MediaServer server) {
-    final cacheKey = '${server.id}_${server.url}_${server.apiKey ?? ''}';
+    // 缓存键不含 apiKey:账号登录会改写 apiKey(用户令牌),若含它就会分裂出
+    // 第二个「未登录」实例——上报走登录实例、取流走旧密钥实例(真机日志实证:
+    // 两个 init,hasKey=false 与 true 并存 → 进度写不进服务端)。
+    final cacheKey = '${server.id}_${server.url}';
     final cached = _serviceCache[cacheKey];
     if (cached != null) return cached;
     kit.MediaServerService? service;
+    // 配了本机账号时不传 API 密钥:服务内的 _ensureAuth 见到非空 apiKey 会直接
+    // 短路(return true)而永不登录,导致播放会话带的是系统密钥 —— Emby 对系统
+    // 密钥的会话不写观看进度(2026-09-27 实证)。留空 apiKey 才会走用户名密码
+    // 登录、拿到用户令牌。
+    final hasAccountCreds = (server.password ?? '').isNotEmpty &&
+        (server.username ?? '').isNotEmpty;
+    final effectiveApiKey = hasAccountCreds ? '' : (server.apiKey ?? '');
     switch (server.type) {
       case kit.ServerType.emby:
         service = kit.EmbyService(
           baseUrl: server.url,
-          apiKey: server.apiKey ?? '',
+          apiKey: effectiveApiKey,
           username: server.username,
           password: server.password,
         );
@@ -174,7 +216,7 @@ class PlayerLaunchController extends GetxService {
       case kit.ServerType.jellyfin:
         service = kit.JellyfinService(
           baseUrl: server.url,
-          apiKey: server.apiKey ?? '',
+          apiKey: effectiveApiKey,
           username: server.username,
           password: server.password,
         );
@@ -195,6 +237,143 @@ class PlayerLaunchController extends GetxService {
     }
     if (service != null) _serviceCache[cacheKey] = service;
     return service;
+  }
+
+  /// 选择可用地址:内网优先(探测通过即用),否则外网,都不可达时回退内网。
+  /// 结果与网络指纹绑定缓存——切换 WiFi/流量后自动重新判定。
+  Future<String?> _resolveUsableUrl(
+    String serverName, {
+    required String lan,
+    required String wan,
+  }) async {
+    if (wan.isEmpty) return lan.isEmpty ? null : lan;
+    if (lan.isEmpty) return wan;
+
+    final fp = await _networkFingerprint();
+    final cached = _resolvedUrl[serverName];
+    if (cached != null && _resolvedFp[serverName] == fp) return cached;
+
+    if (await _probeUrl(lan)) {
+      _resolvedUrl[serverName] = lan;
+      _resolvedFp[serverName] = fp;
+      _log.warning('播放地址[$serverName] 选内网: $lan');
+      return lan;
+    }
+    if (await _probeUrl(wan)) {
+      _resolvedUrl[serverName] = wan;
+      _resolvedFp[serverName] = fp;
+      _log.warning('播放地址[$serverName] 选外网(内网不可达): $wan');
+      return wan;
+    }
+    _resolvedUrl[serverName] = lan;
+    _resolvedFp[serverName] = fp;
+    _log.warning('播放地址[$serverName] 两个地址均探测失败,回退内网: $lan');
+    return lan;
+  }
+
+  /// ── 媒体服务器本机账号 ──
+  ///
+  /// 为什么需要:Emby/Jellyfin 只对「用户登录令牌」建立的播放会话写入观看进度;
+  /// 用系统级 API 密钥时上报虽返回 204 但进度被静默丢弃(2026-09-27 双向实证)。
+  /// 配置账号后服务会走 loginByUsernamePassword 取得用户令牌,「继续观看」可正常同步。
+  static const String _accountKeyPrefix = 'player_ms_account_';
+
+  String _accountKey(String serverName) => '$_accountKeyPrefix$serverName';
+
+  /// 读取某媒体服务器的本机账号(未配置返回 null)
+  Future<({String username, String password})?> loadAccount(
+    String serverName,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_accountKey(serverName));
+      if (raw == null || raw.isEmpty) return null;
+      final m = jsonDecode(raw);
+      if (m is! Map) return null;
+      final u = m['username']?.toString() ?? '';
+      final pw = m['password']?.toString() ?? '';
+      if (pw.isEmpty) return null;
+      return (username: u, password: pw);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 保存本机账号(密码为空则清除配置)
+  Future<void> saveAccount(
+    String serverName, {
+    required String username,
+    required String password,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (password.isEmpty) {
+      await prefs.remove(_accountKey(serverName));
+    } else {
+      await prefs.setString(
+        _accountKey(serverName),
+        jsonEncode({'username': username, 'password': password}),
+      );
+    }
+    _serviceCache.clear();
+  }
+
+  /// 测试账号是否可登录(返回错误信息,null 表示成功)
+  Future<String?> testAccount({
+    required String baseUrl,
+    required kit.ServerType type,
+    required String username,
+    required String password,
+  }) async {
+    try {
+      final probe = type == kit.ServerType.jellyfin
+          ? kit.JellyfinService(baseUrl: baseUrl, username: username, password: password)
+          : kit.EmbyService(baseUrl: baseUrl, username: username, password: password);
+      final ok = await probe.loginByUsernamePassword();
+      return ok ? null : '登录失败,请检查用户名与密码';
+    } catch (e) {
+      return '登录失败: $e';
+    }
+  }
+
+  /// 轻量连通性探测(走双栈竞速,IPv4/IPv6 任一可达即通过)
+  Future<bool> _probeUrl(String base) async {
+    try {
+      final dio = kit.createDualStackDio(
+        baseUrl: base,
+        connectTimeout: const Duration(seconds: 2),
+        receiveTimeout: const Duration(seconds: 3),
+      );
+      final r = await dio.get<dynamic>('/System/Info/Public');
+      return r.statusCode != null && r.statusCode! < 500;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 网络指纹:当前设备的 IPv4 地址集合(排序),换网络时变化
+  Future<String> _networkFingerprint() async {
+    try {
+      final ifaces = await NetworkInterface.list(
+        includeLoopback: false,
+        type: InternetAddressType.IPv4,
+      );
+      final addrs = <String>[];
+      for (final i in ifaces) {
+        for (final a in i.addresses) {
+          addrs.add(a.address);
+        }
+      }
+      addrs.sort();
+      return addrs.join(',');
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// 手动清空地址解析缓存(切换账号/配置变更后调用)
+  void invalidateResolvedUrl() {
+    _resolvedUrl.clear();
+    _resolvedFp.clear();
   }
 
   kit.ServerType mapKitType(String type) {
@@ -229,7 +408,7 @@ class PlayerLaunchController extends GetxService {
     }
     final servers = await enabledServers();
     for (final s in servers) {
-      final kitServer = toKitServer(s);
+      final kitServer = await toKitServer(s);
       if (kitServer == null) continue;
       final service = _serviceFor(kitServer);
       if (service == null) continue;
@@ -265,48 +444,116 @@ class PlayerLaunchController extends GetxService {
 
   /// 网页播放回退:GET /api/v1/mediaserver/play/{itemid} 取播放页地址
   /// 首页「继续观看 / 最近添加」卡片直连播放(媒体服务器条目 id 已知)。
-  /// 剧集自动定位「下一集未看完的」;续播位置由媒体服务器观看进度决定。
+  /// 立即进入播放容器页,条目/流地址解析由容器页内部完成(见 [resolveForPlayback]),
+  /// 剧集自动定位「下一集未看完的」。
   Future<void> playByItemId({
     required String itemId,
     String? serverName,
     String? serverType,
+    bool fromStart = false,
+    String? title,
+    String? subtitle,
   }) async {
-    await _ensureKit();
-        final server = await _pickServer(serverName: serverName, serverType: serverType);
-    if (server == null) {
-      ToastUtil.info('未找到可用的媒体服务器配置');
-      return;
-    }
-    final service = _serviceFor(server);
-    if (service == null) {
-      ToastUtil.info('媒体服务器配置不完整');
-      return;
-    }
-    try {
-      final item = await service.getItemDetails(itemId);
-      List<kit.MediaItem>? episodes;
-      var targetId = itemId;
-      if (item.type == kit.MediaType.series) {
-        episodes = await service.getEpisodes(item.id);
-        if (episodes.isNotEmpty) {
-          final next = episodes.firstWhere(
-            (e) => (e.watchProgress ?? 0) < 1,
-            orElse: () => episodes!.first,
-          );
-          targetId = next.id;
-        }
-      }
-      final session = await kit.PlaybackResolver.resolve(
+    startPlayback(
+      itemId: itemId,
+      serverName: serverName,
+      serverType: serverType,
+      fromStart: fromStart,
+      title: title ?? '正在准备播放',
+      subtitle: subtitle,
+    );
+  }
+
+  /// 立即进入播放容器页(不等待解析):把"卡在详情页无反馈"
+  /// 变成"播放页里有进度",ISO 等慢解析场景收益最大。
+  void startPlayback({
+    required String itemId,
+    String? serverName,
+    String? serverType,
+    bool fromStart = false,
+    bool autoNextEpisode = true,
+    String title = '正在准备播放',
+    String? subtitle,
+    kit.MediaServerService? service,
+    kit.MediaServer? server,
+    List<kit.MediaItem>? episodes,
+  }) {
+    Get.toNamed<void>(
+      '/player',
+      arguments: PlayerPlayRequest(
+        itemId: itemId,
+        serverName: serverName,
+        serverType: serverType,
+        fromStart: fromStart,
+        autoNextEpisode: autoNextEpisode,
+        title: title,
+        subtitle: subtitle,
         service: service,
         server: server,
-        itemId: targetId,
         episodes: episodes,
-      );
-      _push(session);
-    } catch (e) {
-      _log.warning('直接起播失败: $e');
-      ToastUtil.error('起播失败,请检查媒体服务器');
+      ),
+    );
+  }
+
+  /// 解析播放会话(由播放容器页调用):定位条目 → 必要时自动选续播单集
+  /// → 解析直连流地址(ISO 场景含原盘解析,耗时 1-2 秒)。
+  Future<kit.PlayerSession> resolveForPlayback({
+    required String itemId,
+    String? serverName,
+    String? serverType,
+    bool fromStart = false,
+    bool autoNextEpisode = true,
+    kit.MediaServerService? service,
+    kit.MediaServer? server,
+    List<kit.MediaItem>? episodes,
+  }) async {
+    await _ensureKit();
+    var svc = service;
+    var srv = server;
+    if (svc == null || srv == null) {
+      srv = await _pickServer(serverName: serverName, serverType: serverType);
+      if (srv == null) {
+        throw Exception('未找到可用的媒体服务器配置');
+      }
+      svc = _serviceFor(srv);
+      if (svc == null) {
+        throw Exception('媒体服务器配置不完整');
+      }
     }
+    // 未配置本机账号时提示一次:Emby/Jellyfin 只对用户令牌的会话写进度,
+    // API 密钥的播放进度会被服务端静默丢弃(继续观看不更新)。
+    if (!_accountHintShown) {
+      final account = await loadAccount(srv.name);
+      if (account == null &&
+          (srv.type == kit.ServerType.emby ||
+              srv.type == kit.ServerType.jellyfin)) {
+        _accountHintShown = true;
+        ToastUtil.info(
+          '提示:在「设置 → 系统设置 → 媒体服务器」配置本机账号后,播放进度才能同步',
+          duration: const Duration(seconds: 4),
+        );
+      }
+    }
+    final item = await svc.getItemDetails(itemId);
+    var eps = episodes;
+    var targetId = itemId;
+    if (autoNextEpisode && item.type == kit.MediaType.series) {
+      eps ??= await svc.getEpisodes(item.id);
+      if (eps.isNotEmpty) {
+        final next = eps.firstWhere(
+          (e) => (e.watchProgress ?? 0) < 1,
+          orElse: () => eps!.first,
+        );
+        targetId = next.id;
+      }
+    }
+    final session = await kit.PlaybackResolver.resolve(
+      service: svc,
+      server: srv,
+      itemId: targetId,
+      episodes: eps,
+    );
+    return fromStart ? _sessionFromStart(session) : session;
   }
 
   /// 从媒体服务器拉取条目详情(用于反查 TMDB 身份)
@@ -322,51 +569,26 @@ class PlayerLaunchController extends GetxService {
     return service.getItemDetails(itemId);
   }
 
-  /// 详情页播放入口(电影直连 / 剧集默认播下一集未看完的)
+  /// 详情页播放入口(电影直连 / 剧集默认播下一集未看完的)。
+  /// 立即进入播放容器页,解析在页内完成。
   Future<void> playProbe({
     required PlayProbe probe,
     bool fromStart = false,
+    String? title,
+    String? subtitle,
   }) async {
-    await _ensureKit();
-        final server = await _pickServer(serverName: probe.serverName);
-    if (server == null) {
-      ToastUtil.info('未找到可用的媒体服务器配置');
-      return;
-    }
-    final service = _serviceFor(server);
-    if (service == null) {
-      ToastUtil.info('媒体服务器配置不完整');
-      return;
-    }
-    try {
-      List<kit.MediaItem>? episodes;
-      var targetId = probe.itemId;
-      if (probe.isSeries) {
-        episodes = await service.getEpisodes(probe.itemId);
-        if (episodes.isNotEmpty) {
-          // 下一集未看完的:进度为空或 <100% 的第一集
-          final next = episodes.firstWhere(
-            (e) => (e.watchProgress ?? 0) < 1,
-            orElse: () => episodes!.first,
-          );
-          targetId = next.id;
-        }
-      }
-      final session = await kit.PlaybackResolver.resolve(
-        service: service,
-        server: server,
-        itemId: targetId,
-        episodes: episodes,
-        // fromStart=true 由「从头看」触发:续播位置清零
-      );
-      _push(fromStart ? _sessionFromStart(session) : session);
-    } catch (e) {
-      _log.warning('起播失败: $e');
-      ToastUtil.error('起播失败,请检查媒体服务器');
-    }
+    startPlayback(
+      itemId: probe.itemId,
+      serverName: probe.serverName,
+      fromStart: fromStart,
+      autoNextEpisode: probe.isSeries,
+      title: title ?? '正在准备播放',
+      subtitle: subtitle,
+    );
   }
 
-  /// 选集播放(详情页选集弹层 / 浏览详情页)
+  /// 选集播放(详情页选集弹层 / 浏览详情页):立即进入播放容器页,
+  /// service/server/episodes 已就绪直接传入,不再重复定位。
   Future<void> playEpisodeItem({
     required kit.MediaServerService service,
     required kit.MediaServer server,
@@ -374,19 +596,15 @@ class PlayerLaunchController extends GetxService {
     List<kit.MediaItem>? episodes,
     bool fromStart = false,
   }) async {
-    await _ensureKit();
-        try {
-      final session = await kit.PlaybackResolver.resolve(
-        service: service,
-        server: server,
-        itemId: episode.id,
-        episodes: episodes,
-      );
-      _push(fromStart ? _sessionFromStart(session) : session);
-    } catch (e) {
-      _log.warning('选集起播失败: $e');
-      ToastUtil.error('起播失败,请检查媒体服务器');
-    }
+    startPlayback(
+      itemId: episode.id,
+      fromStart: fromStart,
+      autoNextEpisode: false,
+      title: episode.title.isNotEmpty ? episode.title : '正在准备播放',
+      service: service,
+      server: server,
+      episodes: episodes,
+    );
   }
 
   /// 首页「继续观看」卡片带上下文的播放(续播/从头看)。
@@ -397,11 +615,16 @@ class PlayerLaunchController extends GetxService {
     String? serverName,
     String? serverType,
     bool fromStart = false,
+    String? title,
+    String? subtitle,
   }) {
     return playByItemId(
       itemId: itemId,
       serverName: serverName,
       serverType: serverType,
+      fromStart: fromStart,
+      title: title,
+      subtitle: subtitle,
     );
   }
 
@@ -456,7 +679,7 @@ class PlayerLaunchController extends GetxService {
       }
     }
     picked ??= servers.first;
-    return toKitServer(picked, isDefault: picked == servers.first);
+    return await toKitServer(picked, isDefault: picked == servers.first);
   }
 
   void _push(kit.PlayerSession session) {

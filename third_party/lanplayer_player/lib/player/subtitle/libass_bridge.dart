@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import '../../utils/app_log.dart';
+import '../../models/player_settings.dart';
+import 'libass_style.dart';
 
 /// libass 原生桥接 — ASS/SSA 字幕渲染
 ///
@@ -9,6 +11,27 @@ import '../../utils/app_log.dart';
 ///
 /// 当 libass 不可用时，回退到 Flutter 层的 SubtitleOverlay 渲染。
 class LibassBridge {
+  /// 当前这批字幕是否强制统一样式（SRT/VTT 恒 true；ASS 由用户设置决定）。
+  /// 记住它是为了"改样式后重下发"时保持同一语义（见 [applySettings]）。
+  static bool _forceStyle = true;
+
+  /// 下发字幕样式覆盖给 libass（只覆盖字体名/字号/颜色/描边/属性，
+  /// **不含定位与边距** —— 特效字幕的 \pos/\move/\k/	 不受影响）。
+  static Future<void> setStyle(Map<String, Object> args) async {
+    _forceStyle = (args['enabled'] as int? ?? 1) == 1;
+    try {
+      await _channel.invokeMethod<void>('setStyle', args);
+      AppLog.i('LibassBridge',
+          '样式覆盖已下发: fontSize=${args['fontSize']} enabled=${args['enabled']}');
+    } catch (e) {
+      AppLog.w('LibassBridge', '样式覆盖下发失败: $e');
+    }
+  }
+
+  /// 按当前设置重下发（改样式时调用；forceStyle 沿用当前字幕类型）
+  static Future<void> applySettings(PlayerSettings settings) =>
+      setStyle(libassStyleArgs(settings, forceStyle: _forceStyle));
+
   static const MethodChannel _channel = MethodChannel('com.lanplayer/libass');
   static bool _initialized = false;
   static bool _libassAvailable = false;

@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'player_engine.dart';
-import '../mpv/mpv_engine.dart';
 import '../exo/exo_engine.dart';
+import '../native_surface/native_surface_engine.dart';
 import '../exo/exo_ffmpeg_engine.dart';
 import '../../services/storage_service.dart';
 import '../../utils/app_log.dart';
@@ -18,6 +18,40 @@ enum EngineSelectStrategy {
   mpvOnly,
   /// 仅 Exo
   exoOnly,
+  /// 仅定制 libmpv 原生 Surface（「MPV原生」，TV 弹幕卡顿的根治内核）
+  nativeOnly,
+}
+
+/// ISO 原盘本地代理流（IsoNative 起的 127.0.0.1 服务）？
+///
+/// 这类地址形如 `http://127.0.0.1:PORT/stream.m2ts` —— 既不以 `.iso` 结尾、
+/// 也不含 `bdmv`，所以 [_isHdrFile] 的原盘判断认不出来，会落到 auto → Exo。
+/// 真机实证（2026-09-27）：Exo 播不了原盘 m2ts，失败回退要白等 5 秒
+/// （日志 01:26:26 ISO 就绪 → 01:26:31 原生内核才起来）。
+bool isIsoProxyStreamUrl(String url) {
+  final lower = url.toLowerCase();
+  if (!lower.startsWith('http://127.0.0.1:') &&
+      !lower.startsWith('http://localhost:')) {
+    return false;
+  }
+  return lower.contains('/stream.m2ts');
+}
+
+/// 设置里的内核偏好（`playerKernel`）→ 选择策略。
+///
+/// TV 设置项与 TV 播放页共用这一份映射：此前两边各写一套 switch，新增内核时
+/// 漏掉一处就会出现「设置里选了但播放时没用上」。可单测。
+EngineSelectStrategy engineStrategyForKernel(String kernel) {
+  switch (kernel) {
+    case 'exo':
+      return EngineSelectStrategy.exoOnly;
+    case 'mpv':
+      return EngineSelectStrategy.mpvOnly;
+    case 'native':
+      return EngineSelectStrategy.nativeOnly;
+    default:
+      return EngineSelectStrategy.auto;
+  }
 }
 
 /// 播放器管理器 — 负责内核选择、切换、回退
@@ -38,7 +72,7 @@ class PlayerManager {
   PlayerEngine? get currentEngine => _currentEngine;
 
   /// 当前引擎类型
-  PlayerEngineType get currentEngineType => _currentEngine?.engineType ?? PlayerEngineType.mpv;
+  PlayerEngineType get currentEngineType => _currentEngine?.engineType ?? PlayerEngineType.nativeSurface;
 
   /// 引擎切换通知流
   Stream<PlayerEngineType> get engineChangeStream => _engineChangeController.stream;
@@ -53,16 +87,26 @@ class PlayerManager {
 
   /// 根据设置和 URL 自动选择最佳引擎
   PlayerEngineType selectEngine(String url) {
-    // iOS 上 ExoPlayer 不存在(video_player 走 AVPlayer,不支持 MKV/HEVC
-    // 等媒体中心常见格式)—— iOS 强制 MPV(mpv iOS 带 videotoolbox 硬解)
+    // iOS 上 ExoPlayer 不存在(video_player 走 AVPlayer);原生 Surface 内核的
+    // 平台实现仅 Android(Kotlin + SurfaceView)——iOS 用 video_player 兜底。
     if (Platform.isIOS) {
-      return PlayerEngineType.mpv;
+      return PlayerEngineType.exo;
     }
 
-    // HDR/蓝光原盘文件强制使用 MPV（MPV 已配置 tone-mapping，ExoPlayer 无法处理）
-    if (_isHdrFile(url)) {
-      AppLog.i('PlayerManager', 'selectEngine: HDR/蓝光 → MPV (url=${url.length > 80 ? '${url.substring(0, 80)}...' : url})');
-      return PlayerEngineType.mpv;
+    // ISO 原盘的本地代理流：直达原生内核，别让 Exo 白试一轮（真机实证要等 5 秒
+    // 才回退）。选它而不是 MPV，是因为原盘普遍是 PGS 图形字幕，需要内核里的
+    // libass/位图字幕能力；ABI 上没有 libmp2 时会由既有的回退机制转 MPV。
+    if (isIsoProxyStreamUrl(url)) {
+      AppLog.i('PlayerManager', 'selectEngine: ISO 原盘本地流 → 原生内核');
+      return PlayerEngineType.nativeSurface;
+    }
+
+    // HDR/蓝光原盘文件强制使用 MPV（MPV 已配置 tone-mapping，ExoPlayer 无法处理）。
+    // 例外：用户显式选了原生内核时不拦截 —— 它同样是 libmpv（libplacebo 带
+    // DV/HLG tone-mapping），且原盘 ISO 的直连也刚在它上面打通，不该被顶掉。
+    if (_strategy != EngineSelectStrategy.nativeOnly && _isHdrFile(url)) {
+      AppLog.i('PlayerManager', 'selectEngine: HDR/蓝光 → 原生内核 (url=${url.length > 80 ? '${url.substring(0, 80)}...' : url})');
+      return PlayerEngineType.nativeSurface;
     }
 
     final streaming = _isStreamingUrl(url);
@@ -70,9 +114,12 @@ class PlayerManager {
 
     switch (_strategy) {
       case EngineSelectStrategy.mpvOnly:
-        return PlayerEngineType.mpv;
+        // media_kit 内核已移除:MPV 语义由定制原生内核承接
+        return PlayerEngineType.nativeSurface;
       case EngineSelectStrategy.exoOnly:
         return PlayerEngineType.exo;
+      case EngineSelectStrategy.nativeOnly:
+        return PlayerEngineType.nativeSurface;
       case EngineSelectStrategy.auto:
         // ExoPlayer 为主力引擎（TV 上 Surface 直通性能最优），
         // MPV 仅用于 HDR/ISO/BDMV 原盘（已由 _isHdrFile 在上方拦截）
@@ -217,9 +264,9 @@ class PlayerManager {
 
       // 尝试回退到另一个引擎
       if (forceEngine == null && _strategy != EngineSelectStrategy.mpvOnly && _strategy != EngineSelectStrategy.exoOnly) {
-        final fallbackType = engineType == PlayerEngineType.mpv
+        final fallbackType = engineType == PlayerEngineType.nativeSurface
             ? PlayerEngineType.exo
-            : PlayerEngineType.mpv;
+            : PlayerEngineType.nativeSurface;
         AppLog.i('PlayerManager', '回退到 ${fallbackType.shortLabel} 内核');
 
         await _currentEngine!.dispose();
@@ -244,8 +291,9 @@ class PlayerManager {
 
   PlayerEngine _createEngineInstance(PlayerEngineType type) {
     switch (type) {
-      case PlayerEngineType.mpv:
-        return MpvEngine();
+      case PlayerEngineType.nativeSurface:
+        // 定制 libmpv 原生 Surface 直渲引擎（弹幕卡顿根治内核）
+        return NativeSurfaceEngine();
       case PlayerEngineType.exo:
         // Android 平台使用 ExoFFmpegEngine（Media3 + FFmpeg 软解 + HDR）
         // 原生层会自动检测 FFmpeg 可用性，不可用时回退到 Media3 内置解码器
@@ -254,7 +302,7 @@ class PlayerManager {
         }
         return ExoPlayerEngine();
       case PlayerEngineType.auto:
-        return MpvEngine(); // auto 模式下默认先尝试 MPV
+        return NativeSurfaceEngine(); // auto 模式下默认先尝试原生内核
     }
   }
 
@@ -323,6 +371,7 @@ class PlayerManager {
             case 'exo':
               _strategy = EngineSelectStrategy.exoOnly;
               break;
+
             default:
               _strategy = EngineSelectStrategy.auto;
           }
@@ -342,5 +391,5 @@ final playerManagerProvider = Provider<PlayerManager>((ref) {
 
 /// 当前引擎类型 Provider
 final currentEngineTypeProvider = StateProvider<PlayerEngineType>((ref) {
-  return PlayerEngineType.mpv;
+  return PlayerEngineType.nativeSurface;
 });

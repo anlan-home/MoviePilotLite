@@ -13,6 +13,9 @@ import 'package:file_picker/file_picker.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../player/core/player_engine.dart';
+import '../../player/core/prepare_phase.dart';
+import '../../player/subtitle/libass_style.dart';
+import '../../player/subtitle/ass_style_normalizer.dart';
 import '../../player/core/player_manager.dart';
 import '../../player/subtitle/subtitle_overlay.dart';
 import '../../player/subtitle/libass_bridge.dart';
@@ -31,6 +34,7 @@ import '../../database/database_service.dart';
 import '../../services/http_client.dart';
 import '../../providers/app_providers.dart';
 import '../../utils/app_log.dart';
+import '../../utils/periodic_timer.dart';
 import '../../utils/animation_config.dart';
 import '../../theme/motion.dart';
 import '../../utils/chinese_converter.dart';
@@ -65,7 +69,8 @@ class PlayerScreen extends ConsumerStatefulWidget {
   const PlayerScreen({
     super.key,
     required this.media,
-    required this.streamUrl,
+    // 允许为空：入口不再预解析（点即进播放页），由播放页自己解析地址
+    this.streamUrl = '',
     this.httpHeaders,
     this.transcodeUrl,
     this.episodes,
@@ -81,7 +86,7 @@ class PlayerScreen extends ConsumerStatefulWidget {
 class _PlayerScreenState extends ConsumerState<PlayerScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   PlayerEngine? _engine;
-  PlayerEngineType _engineType = PlayerEngineType.mpv;
+  PlayerEngineType _engineType = PlayerEngineType.nativeSurface;
   StreamSubscription<PlayerState>? _stateSub;
   int _engineKey = 0; // 引擎切换时增加，强制视频 widget 重建
 
@@ -181,6 +186,58 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   bool _serverSubtitleLoading = false;
 
   bool _isDisposed = false;
+
+  // ── 进入播放的准备阶段（加载层）──
+  // 加载层**延时**出现：普通文件点击即开（解析只是一次 API 往返），立刻转圈会
+  // 凭空多一次闪烁；只有 ISO 解析/服务器转码这类真要等几秒的场景才看得见。
+  PreparePhase? _preparePhase;
+  bool _prepareVisible = false;
+  Timer? _prepareDelayTimer;
+  Timer? _prepareTimeoutTimer;
+
+  /// 该媒体是不是原盘 ISO（决定加载文案是"正在解析原盘…"还是"正在连接服务端…"）
+  bool get _mediaLooksLikeIso {
+    final vt = widget.media.videoTracks;
+    if (vt == null || vt.isEmpty) return false;
+    return isIsoMediaSource(vt.first);
+  }
+
+  void _enterPreparePhase(PreparePhase phase) {
+    _preparePhase = phase;
+    AppLog.i('Player', '准备阶段: ${preparePhaseLabel(phase)}');
+    _prepareDelayTimer ??= Timer(prepareOverlayDelay(phase), () {
+      if (mounted && !_isDisposed && _preparePhase != null) {
+        setState(() => _prepareVisible = true);
+      }
+    });
+    // 兜底：服务端/网络异常时不能让用户对着转圈干等
+    _prepareTimeoutTimer ??= Timer(const Duration(seconds: 20), () {
+      if (!mounted || _isDisposed || _preparePhase == null) return;
+      AppLog.w('Player', '准备阶段超时（20s）');
+      setState(() {
+        _prepareVisible = false;
+        _preparePhase = null;
+        _initError = '打开超时：服务端或网络响应过慢，请重试';
+      });
+    });
+  }
+
+  /// 准备结束：内核已拿到流（有时长）或已开播
+  void _exitPreparePhase() {
+    _prepareDelayTimer?.cancel();
+    _prepareDelayTimer = null;
+    _prepareTimeoutTimer?.cancel();
+    _prepareTimeoutTimer = null;
+    if (_preparePhase == null) return;
+    if (_prepareVisible) {
+      setState(() {
+        _prepareVisible = false;
+        _preparePhase = null;
+      });
+    } else {
+      _preparePhase = null;
+    }
+  }
   bool _cleanupDone = false;
   bool _tracksLoaded = false;
   bool _showedAudioError = false;
@@ -395,6 +452,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void dispose() {
     _isDisposed = true;
+    _prepareDelayTimer?.cancel();
+    _prepareDelayTimer = null;
+    _prepareTimeoutTimer?.cancel();
+    _prepareTimeoutTimer = null;
     WidgetsBinding.instance.removeObserver(this);
     _cleanup();
     super.dispose();
@@ -408,10 +469,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _progressTimer?.cancel();
     _uiUpdateTimer?.cancel();
     // 上报最终位置并关闭播放会话
+    AppLog.i('Player',
+        '_cleanup: 开始收尾 pos=${_position.inMilliseconds}ms itemId=${_activeMedia.id}');
     _reportProgress();
-    final svc = ref.read(currentMediaServerServiceProvider);
-    if (svc is EmbyService) {
-      svc.reportPlaybackStopped(_activeMedia.id, positionMs: _position.inMilliseconds);
+    try {
+      final svc = ref.read(currentMediaServerServiceProvider);
+      AppLog.i('Player', '_cleanup: svc 类型 = ${svc.runtimeType}');
+      if (svc is EmbyService) {
+        svc.reportPlaybackStopped(_activeMedia.id,
+            positionMs: _position.inMilliseconds);
+        AppLog.i('Player', '_cleanup: 已触发 Stopped 上报');
+      } else {
+        AppLog.w('Player', '_cleanup: svc 非 EmbyService,跳过 Stopped 上报');
+      }
+    } catch (e) {
+      AppLog.e('Player', '_cleanup: 取 svc 失败(ProviderScope 可能已销毁): $e');
     }
 
     _danmakuController.dispose();
@@ -455,14 +527,37 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     final manager = ref.read(playerManagerProvider);
 
     try {
+      // 入口不再预解析：地址为空时在这里解析（点即进播放页，等待期有真实进度）
+      var url = widget.streamUrl;
+      if (url.isEmpty) {
+        final svc = widget.service;
+        if (svc == null) {
+          throw StateError('缺少 service，无法解析流地址');
+        }
+        final ps = ref.read(playerSettingsProvider);
+        _enterPreparePhase(
+            _mediaLooksLikeIso ? PreparePhase.openingIso : PreparePhase.resolving);
+        url = await svc.getStreamUrl(
+          widget.media.id,
+          quality: ps.defaultQuality,
+          burnInSubtitle: ps.burnInSubtitle,
+        );
+        if (!mounted || _isDisposed) return; // 解析期间用户可能已退出
+        // 直连失败时的转码兜底流：原先在详情页解析后传入，现在这里取
+        _transcodeFallbackUrl ??= svc.lastTranscodeUrl;
+        AppLog.i('Player',
+            '流地址自解析完成（${_mediaLooksLikeIso ? 'ISO原盘' : '普通'}）: ${url.length > 80 ? '${url.substring(0, 80)}…' : url}');
+        _enterPreparePhase(PreparePhase.startingEngine);
+      }
+
       _engine = await manager.createEngine(
-        url: widget.streamUrl,
+        url: url,
         httpHeaders: widget.httpHeaders,
         autoPlay: true,
       );
       _engineType = _engine!.engineType;
       _engineKey++;
-      _currentStreamUrl = widget.streamUrl;
+      _currentStreamUrl = url;
 
       // 恢复用户音量/亮度：持久化值优先，未设置过则读取系统当前值作为起点，
       // 保证 HUD 与系统实际状态对应（而不是从 100% 起跳）
@@ -472,6 +567,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _stateSub = _engine!.stateStream.listen((state) {
         if (mounted && !_isDisposed) {
           if (_streamTick++ % 20 == 0) AppLog.i("Player", "stateStream: playing=${state.isPlaying} pos=${state.position.inMilliseconds} dur=${state.duration.inMilliseconds}");
+          // 内核已拿到流（有时长）或已开播 → 准备态结束（此后由 _isBuffering 接管）
+          if (_preparePhase != null &&
+              (state.duration > Duration.zero || state.isPlaying)) {
+            _exitPreparePhase();
+          }
           // 先同步弹幕时钟与位置 —— 独立于 setState，任何后续异常都不影响弹幕时间轴
           try {
             _danmakuController.updateConfig(
@@ -597,9 +697,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
       // 监听引擎切换
       manager.engineChangeStream.listen((type) {
-        if (mounted) {
-          setState(() => _engineType = type);
-        }
+        if (!mounted) return;
+        // manager 自己也会换内核（回退/HDR 判定）：宿主手里的引用必须跟着换，
+        // 否则样式/选轨/音量这些控制全打在已停用的旧内核上（真机实证：
+        // 「切换内核: Exo → 原生」之后那次样式下发石沉大海）。
+        final current = manager.currentEngine;
+        setState(() {
+          _engineType = type;
+          if (current != null) _engine = current;
+        });
+        _engine?.applySubtitleStyle(ref.read(playerSettingsProvider));
       });
 
       setState(() {});
@@ -916,33 +1023,41 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _startProgressReporting() {
-    _progressTimer?.cancel();
-    _progressTimer = Timer.periodic(const Duration(seconds: 30), (_) {
-      _reportProgress();
-    });
+    // ⚠️ 两个定时器都必须**幂等**：本方法由状态回调高频调用（真机实测单次推送
+    // ≈250ms），无条件 cancel+重建 = 倒计时重新开始。此前进度定时器就是这么写的，
+    // 结果 30 秒永远等不到触发 —— Emby 的"继续观看"位置只有退出/拖动后才更新
+    // （UI 定时器一直有 isActive 守卫，所以进度条本身是动的，掩盖了这个问题）。
+    _progressTimer = ensurePeriodicTimer(
+        _progressTimer, const Duration(seconds: 30), _reportProgress);
     // UI 更新 Timer：stateStream 频率可能太低，定期推算位置更新进度条
     if (_uiUpdateTimer == null || !_uiUpdateTimer!.isActive) {
+      // 落点只在真正新建时刷新，别让每次推送都把基准时间往后推
       _lastStateTime = DateTime.now();
-      _uiUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
-        if (!_isPlaying || _isDisposed || _isSeeking) return;
-        final now = DateTime.now();
-        final elapsed = now.difference(_lastStateTime).inMilliseconds;
-        if (elapsed >= 500) {
-          final oldPos = _position.inMilliseconds;
-          setState(() {
-            _position = Duration(milliseconds: oldPos + (elapsed * _speed).round());
-          });
-          // 500ms 定时器内检测跳过状态，确保片头按钮秒级响应
-          _checkSkipState(_position);
-          _lastStateTime = now;
-          _uiTick++;
-          if (_uiTick % 20 == 0) {
-            AppLog.i('Player', '_uiUpdateTimer: pos=${_position.inMilliseconds}ms (was $oldPos, elapsed=${elapsed}ms, speed=$_speed)');
-          }
-        }
+    }
+    _uiUpdateTimer = ensurePeriodicTimer(
+        _uiUpdateTimer, const Duration(milliseconds: 500), _tickUiPosition);
+  }
+
+  /// UI 定时器的每帧回调：按倍速推算位置，驱动进度条与跳过片头检测。
+  void _tickUiPosition() {
+    if (!_isPlaying || _isDisposed || _isSeeking) return;
+    final now = DateTime.now();
+    final elapsed = now.difference(_lastStateTime).inMilliseconds;
+    if (elapsed >= 500) {
+      final oldPos = _position.inMilliseconds;
+      setState(() {
+        _position = Duration(milliseconds: oldPos + (elapsed * _speed).round());
       });
+      // 500ms 定时器内检测跳过状态，确保片头按钮秒级响应
+      _checkSkipState(_position);
+      _lastStateTime = now;
+      _uiTick++;
+      if (_uiTick % 20 == 0) {
+        AppLog.i('Player', '_uiUpdateTimer: pos=${_position.inMilliseconds}ms (was $oldPos, elapsed=${elapsed}ms, speed=$_speed)');
+      }
     }
   }
+
 
   /// 平滑推算的播放位置。
   ///
@@ -959,10 +1074,23 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     return _position + Duration(milliseconds: (elapsed * _speed).round());
   }
 
-  Future<void> _reportProgress() async {    if (_engine == null || _isDisposed) return;
-    final pos = _position.inMilliseconds;
+  Future<void> _reportProgress() async {
+    if (_engine == null || _isDisposed) return;
+    var pos = _position.inMilliseconds;
     final dur = _duration.inMilliseconds;
-    if (pos <= 0 || dur <= 0) return;
+    if (pos <= 0 || dur <= 0) {
+      // 不再静默 return：这里混着两种情况 —— 内核**根本没起播**（真机实证：
+      // ISO 转码流 HTTP 500 → mpv "Failed to open"，位置/时长全空）与
+      // 在播但读到 0（状态回读异常）。留痕后现场可直接区分。
+      AppLog.w('Player',
+          '跳过进度上报: pos=${pos}ms dur=${dur}ms（内核未起播或状态回读为空）');
+      return;
+    }
+    // 防护:上报位置不得超过片长 95%——ISO/HDMV 等容器的引擎时长/位置偶发异常
+    // (如瞬间跳到片尾),会让服务端把内容误标"已看"并从"继续观看"消失。
+    if (pos > dur * 0.95) {
+      pos = (dur * 0.95).round();
+    }
     if (pos - _lastReportedMs < 10000) return; // 10s 内去重
     _lastReportedMs = pos;
     AppLog.i('Player', '_reportProgress: pos=${pos}ms dur=${dur}ms');
@@ -1206,7 +1334,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 计算视频文件前 16KB 的 MD5 哈希（用于弹幕精准匹配）
   Future<String?> _computeVideoHash() async {
     try {
-      final url = widget.streamUrl;
+      // 用当前实际地址：入口不再预解析时 widget.streamUrl 是空的（延迟解析后
+      // 它也不会更新），改用切集/切画质后维护的 _currentStreamUrl
+      final url = _currentStreamUrl;
       if (url.isEmpty) return null;
       final headers = widget.httpHeaders ?? {};
       // 只请求前 16KB（rhttp 优先，Dio 回退）
@@ -1870,26 +2000,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 把字幕文件交给引擎加载（本地挑选 / 在线下载共用）
   Future<void> _applyExternalSubtitleFile(String path) async {
     if (!mounted) return;
-    final success = await _engine?.loadExternalSubtitle(path) ?? false;
+    // 外挂 ASS：**先归一化字号再交给内核**。mpv 在 sub-ass-override=no（保留脚本
+    // 样式，用户设置）下 sub-font-size 对 ASS 完全不生效，而下载来的 ASS 常带
+    // 小字号样式 → 外挂明显小于内封。这里只改文件的 Fontsize 字段，
+    // \pos/\move/\k/	 等事件标签逐字节不变 —— 特效与定位不受影响。
+    final isAssFile = path.toLowerCase().endsWith('.ass') ||
+        path.toLowerCase().endsWith('.ssa');
+    var effectivePath = path;
+    if (isAssFile) {
+      final normalized = await _normalizeAssFontSizeFile(path);
+      if (normalized != null) effectivePath = normalized;
+    }
+    if (!mounted) return;
+    // ⚠️ 顺序关键：**先关原生字幕轨，再加载外挂**。
+    // 真机实证（2026-09-27）：此前只对 Exo 关原生轨，mpv 两内核不关 → 内封轨
+    // 与外挂轨同时在选 → 屏幕上出现**两行字幕**（内封 ASS 大、外挂小）。
+    // 旧注释担心"sid=no 会把刚加载的外挂一起隐藏"——那只在 sub-add **之后**
+    // 才成立；放在加载之前，sub-add 的 select 会把外挂选回来，正好单轨显示。
+    await _engine?.setSubtitleTrack(-1);
+    if (!mounted) return;
+    final success =
+        await _engine?.loadExternalSubtitle(effectivePath) ?? false;
     if (!mounted) return;
 
     if (success) {
-      // 双保险：外挂渲染前再次关闭原生字幕轨，防止任何路径重新启用文本轨导致双层。
-      // 仅 ExoPlayer 需要（外挂走 Flutter overlay，原生 SubtitleView 必须关闭）；
-      // MPV 的外挂由 libmpv 原生渲染（sub-files），这里 sid=no 会把刚加载的外挂也隐藏掉。
-      if (_engineType == PlayerEngineType.exo) {
-        await _engine?.setSubtitleTrack(-1);
-      }
       // ── libass 特效渲染（Exo + 外挂 ASS/SSA）──
       // Exo 的 Media3 渲染 ASS 只出纯文本（无 libass）,Dart 层解析也只有
       // 基础样式——原生 libass 桥(jniLibs/libass.so)在 TV 端已验证,这里
       // 接管渲染得到完整特效(定位/卡拉OK/动画)。失败自动回退 Dart 叠加层。
       _stopLibass();
-      final isAss = path.toLowerCase().endsWith('.ass') ||
-          path.toLowerCase().endsWith('.ssa');
+      final isAss = isAssFile;
       var libassOn = false;
-      if (isAss && _engineType == PlayerEngineType.exo) {
-        libassOn = await _tryStartLibassFromFile(path);
+      if (_engineType == PlayerEngineType.exo) {
+        // **普通字幕（SRT/VTT）也交给 libass**：libass 内置默认样式是
+        // 18px @ PlayRes 288 = 6.25% 视频高度（与 mpv 默认一致），而 Exo 原生
+        // SubtitleView / Dart 叠加层那两条路径用 0.06×用户缩放，缩放设为 0.5
+        // 就只剩 3% —— 真机实证「外挂普通字幕明显小于内封」。
+        // ASS 是否强制统一样式由用户设置决定（语义与 mpv 的 sub-ass-override 对齐）。
+        final force =
+            !isAss || ref.read(playerSettingsProvider).subtitleAssOverride;
+        libassOn =
+            await _tryStartLibassFromFile(effectivePath, forceStyle: force);
       }
       if (!mounted) return;
       if (libassOn) {
@@ -1915,7 +2066,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   // ===== libass 原生 ASS 特效渲染（TV 端同款管线）=====
 
   /// 尝试用 libass 加载本地 ASS/SSA 字幕文件。成功返回 true 并启动渲染循环。
-  Future<bool> _tryStartLibassFromFile(String path) async {
+  /// 把外挂 ASS 的字号归一到「视频高度 8% × 用户缩放」，写入临时 .ass 返回路径。
+  ///
+  /// 失败/无需改写返回 null，调用方继续用原文件（绝不因它阻断播放）。
+  Future<String?> _normalizeAssFontSizeFile(String path) async {
+    try {
+      final raw = await File(path).readAsString();
+      final ratio =
+          0.08 * ref.read(playerSettingsProvider).subtitleFontSizeScale;
+      final out = normalizeAssFontSize(raw, ratio);
+      if (out == raw) return null;
+      final dir = await getTemporaryDirectory();
+      final target = File('${dir.path}/sub_norm_${path.hashCode}.ass');
+      await target.writeAsString(out, flush: true);
+      AppLog.i('Player',
+          '外挂 ASS 字号归一化: 目标 ${(ratio * 100).toStringAsFixed(1)}% 视频高度 → ${target.path}');
+      return target.path;
+    } catch (e) {
+      AppLog.w('Player', '外挂 ASS 字号归一化失败（用原文件）: $e');
+      return null;
+    }
+  }
+
+  Future<bool> _tryStartLibassFromFile(String path,
+      {bool forceStyle = true}) async {
     try {
       final state = _engine?.currentState;
       final vw = state?.videoWidth ?? 0;
@@ -1931,6 +2105,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         AppLog.w('Player', 'libass 不可用,回退 Dart 叠加层渲染');
         return false;
       }
+      // 先下发样式覆盖再加载：普通字幕(SRT/VTT)靠它拿到 libass 的正常字号
+      await LibassBridge.setStyle(libassStyleArgs(
+        ref.read(playerSettingsProvider),
+        forceStyle: forceStyle,
+      ));
       final loaded = await LibassBridge.loadData(bytes);
       if (!loaded) {
         AppLog.w('Player', 'libass 加载字幕失败');
@@ -2071,7 +2250,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         // 服务端字幕下载失败：若该服务端轨有同语言同编码的原生配对轨
         // （内嵌字幕，Exo 直接从视频流读取、不依赖服务器提取），回退原生轨。
         final nativeIdx = track['nativeIndex'];
-        if (nativeIdx is int && nativeIdx >= 0 && _engineType == PlayerEngineType.exo) {
+        if (nativeIdx is int &&
+            nativeIdx >= 0 &&
+            (_engineType == PlayerEngineType.exo ||
+                _engineType == PlayerEngineType.nativeSurface)) {
           await _engine?.setSubtitleTrack(nativeIdx);
           if (mounted) {
             setState(() {
@@ -2399,6 +2581,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _engine?.setVolume(restoredVolume);
       _engine?.setSpeed(restoredSpeed);
       _engine?.setFitMode(restoredFitMode);
+      // 字幕样式不跨引擎继承：不重发就退回内核默认（mpv 的 sub-font-size=38
+      // ≈5.3% 屏高，比我们 58/720≈8% 的基准小 1.5 倍）—— 真机实证「切到
+      // MPV原生 后外挂字幕明显小」。TV 端切换后本来就重发，手机端此前漏了。
+      _engine?.applySubtitleStyle(ref.read(playerSettingsProvider));
 
       // 绑定新引擎的 fitMode 监听
       _engine?.fitModeNotifier.addListener(_onFitModeChanged);
@@ -2832,6 +3018,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 key: ValueKey('video_$_engineKey'),
                 child: _engine!.buildVideoWidget(),
               ),
+            // 准备中：延时出现的加载层（普通文件点击即开时看不到）
+            if (_prepareVisible && _initError == null)
+              Positioned.fill(child: _buildPrepareOverlay()),
             // 初始化错误显示
             if (_initError != null)
               Center(
@@ -3836,6 +4025,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _searchDanmaku(String text) {
     final uri = Uri.parse('https://www.baidu.com/s?wd=${Uri.encodeComponent(text)}');
     launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  /// 准备阶段的加载层：**只有动画，不显示任何文字**（用户要求）。
+  ///
+  /// 阶段信息仍写进日志（见 _enterPreparePhase），排查时不靠界面文案。
+  Widget _buildPrepareOverlay() {
+    return Container(
+      color: Colors.black.withValues(alpha: 0.88),
+      alignment: Alignment.center,
+      child: const CircularProgressIndicator(color: Colors.white70),
+    );
   }
 
   Widget _buildVolumeIndicator() {

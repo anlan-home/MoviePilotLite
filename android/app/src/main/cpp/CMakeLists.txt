@@ -18,6 +18,7 @@ set(NATIVE_LIBS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/libs/${ANDROID_ABI}")
 # JNI 桥接库（始终编译）
 add_library(lanplayer_jni SHARED
     lanplayer_jni.cpp
+    lanplayer_mpv.cpp
     iso_native.cpp
     # libudfread:蓝光 ISO 的 UDF 文件系统解析(纯 C,零依赖,源码直编)
     libudfread/udfread.c
@@ -96,4 +97,21 @@ elseif(EXISTS "${NATIVE_LIBS_DIR}/libass.so")
 else()
     message(STATUS "libass not found for ${ANDROID_ABI}, building stub only")
     target_compile_definitions(lanplayer_jni PRIVATE HAS_LIBASS=0)
+endif()
+
+# ===== 定制 libmpv 集成（NativeSurfaceEngine 视频内核）=====
+# libmp2.so: mpv-android 构建链产物，静态编入 libass+fontconfig+
+# ffmpeg(MediaCodec 硬解)+lua+libplacebo+curl。arm64-v8a 先行。
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libmp2.so")
+    message(STATUS "Found custom libmpv(libmp2) for ${ANDROID_ABI}, enabling HAS_MPV")
+    add_library(mpv_custom SHARED IMPORTED)
+    set_target_properties(mpv_custom PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_CURRENT_SOURCE_DIR}/../jniLibs/${ANDROID_ABI}/libmp2.so")
+    target_include_directories(lanplayer_jni PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/mpv_include")
+    find_library(android-lib android)
+    target_link_libraries(lanplayer_jni mpv_custom ${android-lib})
+    target_compile_definitions(lanplayer_jni PRIVATE HAS_MPV=1)
+else()
+    message(STATUS "custom libmpv not found for ${ANDROID_ABI}, JNI stubs only")
 endif()

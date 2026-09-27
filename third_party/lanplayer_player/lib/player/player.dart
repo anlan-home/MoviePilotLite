@@ -6,7 +6,8 @@ export 'core/player_engine.dart';
 export 'core/player_manager.dart';
 
 // 引擎实现
-export 'mpv/mpv_engine.dart';
+export 'native_surface/native_surface_engine.dart';
+export 'native_surface/mpv_track_list.dart';
 export 'exo/exo_engine.dart';
 export 'exo/exo_ffmpeg_engine.dart';
 export 'exo/ffmpeg_audio_extension.dart';

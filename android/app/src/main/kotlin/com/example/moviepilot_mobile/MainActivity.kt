@@ -6,6 +6,11 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import com.lanplayer.AudioCapabilityPlugin
+import com.lanplayer.ExoFFmpegPlugin
+import com.lanplayer.IsoPlugin
+import com.lanplayer.LibassPlugin
+import com.lanplayer.MpvSurfacePlatformViewFactory
 import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,6 +32,12 @@ class MainActivity : FlutterActivity() {
         flutterEngine.plugins.add(AudioCapabilityPlugin())
         // ISO 原盘原生直连(libudfread)
         flutterEngine.plugins.add(IsoPlugin())
+        // 定制 libmpv 原生 Surface 视频视图(NativeSurfaceEngine 直渲,
+        // vo=gpu-next + SurfaceView,绕开 Flutter 纹理管线)
+        flutterEngine.platformViewsController.registry.registerViewFactory(
+            "lanplayer/mpv_surface",
+            MpvSurfacePlatformViewFactory(flutterEngine.dartExecutor.binaryMessenger),
+        )
         // ── 应用更新热更新通道 ──
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, appUpdateChannel).setMethodCallHandler { call, result ->
             when (call.method) {

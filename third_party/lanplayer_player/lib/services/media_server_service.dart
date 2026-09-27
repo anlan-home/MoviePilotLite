@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/media_models.dart';
 import '../utils/app_log.dart';
+import 'dual_stack_http.dart';
 
 class ChapterMarker {
   final String name;
@@ -72,9 +73,14 @@ abstract class MediaServerService {
   final Dio dio;
 
   MediaServerService({required this.baseUrl, Dio? dioClient})
-      : dio = dioClient ?? Dio(BaseOptions(baseUrl: baseUrl, connectTimeout: const Duration(seconds: 10), receiveTimeout: const Duration(seconds: 30), headers: {
-          'Accept': 'application/json; charset=utf-8',
-        })) {
+      : dio = dioClient ?? createDualStackDio(
+          baseUrl: baseUrl,
+          connectTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 30),
+          headers: const {
+            'Accept': 'application/json; charset=utf-8',
+          },
+        ) {
     // 401 自愈拦截器：收到 401 → 强制重新登录 → 用新 token 重试原请求一次。
     // 覆盖两种情况：① 从未登录（首页缓存新鲜时跳过登录，service 一直无 token）；
     // ② token 会话中过期。登录请求自身标记 _isLoginRequest 避免递归死锁；
@@ -548,7 +554,7 @@ class EmbyService extends MediaServerService {
     // 类型未知时不加 IncludeItemTypes,电影/剧集都查
     final include = isTv == null ? null : (isTv ? 'Series' : 'Movie');
     if (title == null || title.isEmpty) {
-      AppLog.i('Emby', 'findItemByTmdb: 无标题与tmdb可查 (tmdb=$tmdbId)');
+      AppLog.i('Emby', 'findItemByTmdb: 无标题可查 (tmdb=$tmdbId)');
       return null;
     }
     final query = <String, dynamic>{
@@ -714,20 +720,34 @@ class EmbyService extends MediaServerService {
         // 服务器会把 BDMV ISO 的 Container 误报为 'ts' 并声称可直连(实测),
         // 但客户端(ffmpeg/mpv/Exo)都没有 UDF 解复用器,直连必然
         // 「Failed to recognize file format」——疯狂动物城 2160p.iso 53GB
-        // 真机实证(2026-08-29)。可靠信号是 VideoType/IsoType:命中即重发
-        // PlaybackInfo 禁用直连,强制服务器转码(服务端有 BDMV 解析)。
+        // 真机实证(2026-08-29)。识别命中即走客户端 ISO 直连(libudfread)。
+        // ⚠️ 识别不能只看 VideoType/IsoType：Emby 对 .iso 条目这两个字段都是
+        // null（Container=blurayiso、Path 以 .iso 结尾，却声称 SupportsDirectPlay
+        // =true），漏判就落到「服务器转码流」，而 Emby 转 blurayiso 直接
+        // HTTP 500 → 黑屏（2026-09-27 真机实证；同一条目在 Jellyfin 上有值）。
         final videoType = source['VideoType']?.toString() ?? '';
         final isoType = source['IsoType']?.toString() ?? '';
-        if (videoType == 'Iso' || isoType.isNotEmpty) {
+        final container = source['Container']?.toString() ?? '';
+        final isoDetected = isIsoMediaSource(source);
+        final isoLabel =
+            isoType.isNotEmpty ? isoType : (container.isNotEmpty ? container : 'ISO');
+        AppLog.i('Emby',
+            '媒体源判定: videoType=${videoType.isEmpty ? 'null' : videoType} '
+            'isoType=${isoType.isEmpty ? 'null' : isoType} container=$container '
+            '→ ${isoDetected ? 'ISO 原盘' : '普通视频'}');
+        if (isoDetected) {
           // ── 首选:原生直连(libudfread 解析 + 本地流服务)──
           try {
-            final directUrl =
-                '$baseUrl/Videos/$itemId/stream?api_key=$apiKey&Static=true'
-                '&MediaSourceId=$sourceId&DeviceId=$_playSessionId';
+            final directUrl = isoDirectStreamUrl(
+              baseUrl: baseUrl,
+              itemId: itemId,
+              apiKey: apiKey,
+              sourceId: sourceId,
+            );
             final localUrl = await IsoNative.openIso(
                 directUrl, source['Size'] as int? ?? 0);
             if (localUrl != null) {
-              AppLog.i('Emby', 'ISO 原盘($isoType):客户端直连 → $localUrl');
+              AppLog.i('Emby', 'ISO 原盘($isoLabel):客户端直连 → $localUrl');
               return localUrl;
             }
             AppLog.w('Emby', '原生直连不可用,回退服务器转码');
@@ -802,7 +822,7 @@ class EmbyService extends MediaServerService {
                   '&SubtitleStreamIndex=$subIdx&SubtitleMethod=Encode';
             }
             AppLog.i('Emby',
-                'ISO 原盘($isoType):转码播放(字幕${subIdx != null ? '烧录@流$subIdx' : '无'},音轨@$audioIdx)');
+                'ISO 原盘($isoLabel):转码播放(字幕${subIdx != null ? '烧录@流$subIdx' : '无'},音轨@$audioIdx)');
             return url2;
           }
           AppLog.w('Emby', 'ISO 原盘且服务器未提供转码地址,回退直连(预期失败)');
@@ -940,12 +960,14 @@ class EmbyService extends MediaServerService {
         'PlayMethod': 'DirectStream',
         'PlaySessionId': _playSessionId,
       };
-      await dio.post(
+      final r = await dio.post(
         '/Sessions/Playing/Progress',
         data: data,
         options: Options(contentType: Headers.jsonContentType),
       );
-      AppLog.d('Emby', 'reportPlaybackProgress: itemId=$itemId, posTicks=$ticks, posMs=$positionMs');
+      // 提级到 info:进度上报是"继续观看"的核心链路,失败/成功都需可观测
+      AppLog.i('Emby',
+          'reportPlaybackProgress OK: itemId=$itemId posMs=$positionMs status=${r.statusCode} session=$_playSessionId');
     } catch (e) { AppLog.e('Emby', 'reportPlaybackProgress FAILED: $e, posMs=$positionMs, ticks=${positionMs * 10000}'); }
   }
 
@@ -966,6 +988,7 @@ class EmbyService extends MediaServerService {
         data: data,
         options: Options(contentType: Headers.jsonContentType),
       );
+      AppLog.i('Emby', 'reportPlaybackStopped OK: itemId=$itemId posMs=${positionMs ?? 0} session=$_playSessionId');
       AppLog.i('Emby', 'reportPlaybackStopped OK: itemId=$itemId, pos=${positionMs}ms');
     } catch (e) { AppLog.e('Emby', 'reportPlaybackStopped FAILED: $e'); }
   }
@@ -1331,10 +1354,6 @@ class EmbyService extends MediaServerService {
       episodeNumber: m['IndexNumber'] ?? m['EpisodeNumber'],
       seriesTitle: m['SeriesName'],
       seriesId: m['SeriesId']?.toString(),
-      // 剧集条目的集数统计(Emby: RecursiveItemCount 总集数, UserData.UnplayedItemCount 未看数)
-      totalEpisodes: (m['RecursiveItemCount'] as num?)?.toInt(),
-      totalSeasons: (m['ChildCount'] as num?)?.toInt(),
-      unplayedItemCount: (userData?['UnplayedItemCount'] as num?)?.toInt(),
       duration: m['RunTimeTicks'] != null ? (m['RunTimeTicks'] / 10000000).toInt() : 0,
       imdbId: providerIds?['Imdb']?.toString(),
       tmdbId: tmdbId,
@@ -2895,3 +2914,50 @@ class _FnosPlaySession {
 }
 
 
+
+
+/// 该媒体源是不是 BDMV/ISO 原盘。
+///
+/// 各服务端字段差异极大，只认 VideoType/IsoType 会漏判（2026-09-27 真机实证）：
+/// 同一个 1080p 蓝光 ISO，Jellyfin 给 `VideoType='Iso'` + `IsoType='BluRay'`，
+/// 而 Emby 两个字段都是 **null**、`Container='blurayiso'`、`Path` 以 `.iso`
+/// 结尾，却声称 `SupportsDirectPlay=true`。漏判 → 走服务器转码流 → Emby 转
+/// blurayiso 直接 HTTP 500 → 黑屏。
+///
+/// 所以按与服务器版本无关的特征判定（路径后缀 / 容器名），字段只作补充。
+bool isIsoMediaSource(Map<dynamic, dynamic> source) {
+  final videoType = source['VideoType']?.toString().toLowerCase() ?? '';
+  final isoType = source['IsoType']?.toString() ?? '';
+  if (videoType == 'iso' || isoType.isNotEmpty) return true;
+  // blurayiso / dvd-iso / iso 都命中；常见容器（mkv/mp4/ts）不含 'iso'
+  final container = source['Container']?.toString().toLowerCase() ?? '';
+  if (container.contains('iso')) return true;
+  final path = source['Path']?.toString().toLowerCase() ?? '';
+  return path.endsWith('.iso');
+}
+
+
+/// ISO 客户端直连用的静态流地址。
+///
+/// ⚠️ **不要加 `DeviceId`**（这里曾经把 PlaySessionId 当 DeviceId 拼进去）。
+/// 真机实测（2026-09-27，同一个 39.6GB 原盘、同一台服务器、同尺寸 2KB 请求）：
+///   Emby 静态流  不带 DeviceId = 8.2ms   带 DeviceId = 78~99ms
+/// 而开 ISO 要打几十次小请求 → Emby 启播 3.06s vs Jellyfin 0.28s（差 11 倍），
+/// 差距几乎全部来自这个参数触发的每请求开销。Jellyfin 忽略该参数，因此去掉它
+/// 两边都安全（实测不带 DeviceId 仍返回 206 且字节数正确）。播放进度上报走
+/// 独立的 PlaybackStart/Progress 接口，不依赖流地址里的会话参数。
+String isoDirectStreamUrl({
+  required String baseUrl,
+  required String itemId,
+  required String apiKey,
+  required String sourceId,
+}) {
+  // 端点选择(真机 + 电脑双向实测,2026-09-27):
+  // Emby 对 ISO 条目的 `/Videos/{id}/stream`(无扩展名)**挂起不响应**
+  // (实测 15~20 秒零字节,原生侧因此报 "步骤=header errno=11" 后超时),
+  // 客户端只能等超时回退服务器转码,而转码流启动又需约 20 秒,合计等待约 40 秒。
+  // 同一 ISO 用 `/Items/{id}/Download`(Emby 官方原文件下载端点)0.09s 即返回
+  // 206 + 原始字节,`/Videos/{id}/stream.mkv`(0.01s)、`/original`(0.03s) 亦可。
+  // 这里用语义最明确的 Download 端点读原始 ISO 字节供客户端 UDF 解析。
+  return '$baseUrl/Items/$itemId/Download?api_key=$apiKey';
+}

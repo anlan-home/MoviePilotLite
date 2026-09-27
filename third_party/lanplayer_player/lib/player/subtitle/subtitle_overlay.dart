@@ -130,14 +130,19 @@ class _SubtitleOverlayState extends State<SubtitleOverlay> {
     );
   }
 
-  /// 字幕底部偏移：固定锚定屏幕底部（用户预期——画幅怎么切，字幕位置不动）。
+  /// 字幕底部偏移：视频显示区底部在屏幕外的深度（像素）。
   ///
-  /// 之前按 fitWidth 把字幕贴到视频框底部（修复"字幕偏下"），代价是切换
-  /// 画幅时字幕跟着跳。现在画幅自适应语义是 contain 完整显示，字幕与画幅
-  /// 解耦，统一锚定屏幕。
-  double _computeVideoBottomInset() {
-    return 0;
-  }
+  /// contain/自适应：视频完整落在屏幕内 → 0，字幕锚定屏幕底 = 视频底。
+  /// cover（填充）/fitWidth：视频按宽度铺满、上下溢出屏幕 → 底部有
+  /// 一截沉到屏幕外，字幕若仍锚屏幕底就被裁。此时把字幕抬到视频
+  /// 实际底缘之上。
+  /// fill（拉伸）/fitHeight：视频高度铺满屏幕、没有上下溢出 → 0。
+  double _computeVideoBottomInset() => subtitleBottomInset(
+        fitMode: widget.fitMode,
+        videoSize: widget.videoSize,
+        screenWidth: widget.screenWidth,
+        screenHeight: widget.screenHeight,
+      );
 
   /// 字体解析：自定义字体文件优先，其次样式表字体，缺省系统字体
   String? _resolveFontFamily(PlayerSettings s) {
@@ -310,4 +315,34 @@ class ExternalSubtitleManager {
     _loaded = false;
     _error = null;
   }
+}
+
+
+/// 字幕底部抬升量(像素):视频显示区底部沉到屏幕外的深度。
+/// 纯函数便于单测(test/subtitle_inset_test.dart)。
+double subtitleBottomInset({
+  required BoxFit fitMode,
+  required Size videoSize,
+  required double screenWidth,
+  required double screenHeight,
+}) {
+  if (videoSize.width <= 0 || videoSize.height <= 0 || screenWidth <= 0) {
+    return 0;
+  }
+  // contain/自适应:视频完整落在屏幕内(上下有留白或正好铺满)→ 无溢出;
+  // fill(拉伸)/fitHeight(适配高度):高度铺满屏幕 → 无上下溢出。
+  // 注意 contain 在"屏幕比视频更宽"时高度铺满、无溢出;在"屏幕更窄"时
+  // 视频按宽适配、上下留白 → 字幕若贴屏幕底会低于视频底,但那是
+  // contain 的固有形态(用户选择完整显示),不在此修正。
+  if (fitMode == BoxFit.contain ||
+      fitMode == BoxFit.fill ||
+      fitMode == BoxFit.fitHeight) {
+    return 0;
+  }
+  // cover(填充)与 fitWidth(适配宽度):视频宽铺满屏幕,
+  // 显示高度 = 屏宽/视频宽高比,上下对称溢出(中心裁切)。
+  final displayHeight = screenWidth / (videoSize.width / videoSize.height);
+  final overflow = displayHeight - screenHeight;
+  if (overflow <= 0) return 0;
+  return overflow / 2;
 }

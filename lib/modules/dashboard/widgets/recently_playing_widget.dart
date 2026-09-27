@@ -492,6 +492,8 @@ Future<void> _openMediaDetail(LatestMedia media, {bool withResume = false}) asyn
     itemId: media.id,
     serverName: media.libraryName,
     serverType: media.serverType,
+    title: media.title,
+    subtitle: media.type.isNotEmpty ? media.type : null,
   );
 }
 

@@ -117,7 +117,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
       }
       match ??= servers.isNotEmpty ? servers.first : null;
       if (match == null) return;
-      final kitServer = launch.toKitServer(match, isDefault: true);
+      final kitServer = await launch.toKitServer(match, isDefault: true);
       if (kitServer == null) return;
       final service = launch.serviceFor(kitServer);
       if (service == null) return;
@@ -257,21 +257,33 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
             onPressed: widget.isLoading
                 ? null
                 : () {
+                    final titleText = widget.detail.title ?? '';
+                    final subText = (widget.detail.year ?? '').isEmpty
+                        ? null
+                        : widget.detail.year;
                     if (hasResume) {
                       PlayerLaunchController.to.playByItemId(
                         itemId: _resume!.itemId,
                         serverName: _resume!.serverName,
                         serverType: _resume!.serverType,
+                        title: titleText,
+                        subtitle: subText,
                       );
                       return;
                     }
                     if (probe != null) {
-                      PlayerLaunchController.to.playProbe(probe: probe);
+                      PlayerLaunchController.to.playProbe(
+                        probe: probe,
+                        title: titleText,
+                        subtitle: subText,
+                      );
                     } else if (_resume != null) {
                       PlayerLaunchController.to.playByItemId(
                         itemId: _resume!.itemId,
                         serverName: _resume!.serverName,
                         serverType: _resume!.serverType,
+                        title: titleText,
+                        subtitle: subText,
                       );
                     }
                   },
@@ -427,6 +439,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
                     serverName: r.serverName,
                     serverType: r.serverType,
                     fromStart: true,
+                    title: widget.detail.title ?? '',
                   );
                 },
                 child: Text('从头看',
@@ -464,7 +477,9 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
       }
       match ??= servers.isNotEmpty ? servers.first : null;
       final kit.MediaServer? server =
-          match == null ? null : launch.toKitServer(match, isDefault: true);
+          match == null
+              ? null
+              : await launch.toKitServer(match, isDefault: true);
       final service =
           server == null ? null : launch.serviceFor(server);
       if (server == null || service == null) {

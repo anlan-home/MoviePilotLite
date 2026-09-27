@@ -11,6 +11,7 @@ import '../../models/player_settings.dart';
 import '../../utils/app_log.dart';
 import '../../theme/app_theme.dart';
 import '../subtitle/subtitle_overlay.dart';
+import '../subtitle/libass_bridge.dart';
 import 'ffmpeg_audio_extension.dart';
 
 /// ExoPlayer + FFmpeg 音频软解引擎
@@ -280,9 +281,7 @@ class ExoFFmpegEngine implements PlayerEngine {
   Future<void> dispose() async {
     _positionTimer?.cancel();
     await _stateSub?.cancel();
-    // 注意:不 dispose _videoSizeNotifier —— 切换内核时画面上的旧视频组件
-    // 还挂着它的监听器,先销毁会抛 "used after being disposed";
-    // 引擎弃用后整个对象交由 GC 回收即可。
+    _videoSizeNotifier.dispose();
     await _channel.invokeMethod('dispose');
     await _stateController.close();
   }
@@ -322,6 +321,9 @@ class ExoFFmpegEngine implements PlayerEngine {
 
   @override
   Future<void> applySubtitleStyle(PlayerSettings settings) async {
+    // 外挂字幕走原生 libass 层渲染（含普通字幕）→ 样式改动要同步过去，
+    // 否则改字号/颜色只对内封生效、外挂不变
+    await LibassBridge.applySettings(settings);
     // 推送字幕样式到原生 SubtitleView（内嵌字幕渲染）
     AppLog.i(
       'ExoFFmpeg',

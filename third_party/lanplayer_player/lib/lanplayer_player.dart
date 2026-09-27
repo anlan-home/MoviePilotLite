@@ -13,6 +13,7 @@ export 'models/media_models.dart';
 export 'player/player.dart';
 export 'providers/app_providers.dart';
 export 'services/media_server_service.dart';
+export 'services/dual_stack_http.dart';
 export 'services/danmaku_service.dart';
 export 'database/database_service.dart';
 export 'services/storage_service.dart';

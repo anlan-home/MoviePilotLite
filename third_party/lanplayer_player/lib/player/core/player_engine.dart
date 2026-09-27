@@ -5,29 +5,31 @@ import '../../models/player_settings.dart';
 
 /// 播放器内核类型
 enum PlayerEngineType {
-  mpv,
   exo,
-  auto;
+  auto,
+
+  /// 定制 libmpv 原生 Surface 直渲（弹幕卡顿根治内核，实验）
+  nativeSurface;
 
   String get label {
     switch (this) {
-      case PlayerEngineType.mpv:
-        return 'MPV (libmpv)';
       case PlayerEngineType.exo:
         return 'ExoPlayer';
       case PlayerEngineType.auto:
         return '自动选择';
+      case PlayerEngineType.nativeSurface:
+        return 'MPV原生(Surface)';
     }
   }
 
   String get shortLabel {
     switch (this) {
-      case PlayerEngineType.mpv:
-        return 'MPV';
       case PlayerEngineType.exo:
         return 'Exo';
       case PlayerEngineType.auto:
         return '自动';
+      case PlayerEngineType.nativeSurface:
+        return '原生';
     }
   }
 }
@@ -56,7 +58,7 @@ class PlayerState {
     this.speed = 1.0,
     this.volume = 1.0,
     this.error,
-    this.engineType = PlayerEngineType.mpv,
+    this.engineType = PlayerEngineType.nativeSurface,
     this.isHdr = false,
     this.videoWidth = 0,
     this.videoHeight = 0,

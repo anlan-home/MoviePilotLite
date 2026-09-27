@@ -9,9 +9,6 @@ dependencies:
     sdk: flutter
   dio: ^5.4.0
   flutter_riverpod: ^2.4.9
-  media_kit: ^1.2.6
-  media_kit_video: ^2.0.1
-  media_kit_libs_video: ^1.0.7
   video_player: ^2.11.1
   fast_gbk: ^1.0.0
   drift: ^2.18.0

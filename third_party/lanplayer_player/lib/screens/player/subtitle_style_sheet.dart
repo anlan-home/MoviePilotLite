@@ -356,7 +356,7 @@ class SubtitleStyleContent extends ConsumerWidget {
                 child: OutlinedButton.icon(
                   onPressed: () => _pickCustomFont(notifier, context, s),
                   icon: Icon(Icons.font_download_rounded, size: 16, color: AppTheme.primary),
-                  label: Text("选择字体文件", style: TextStyle(color: AppTheme.primary, fontSize: 13)),
+                  label: Text('选择字体文件', style: TextStyle(color: AppTheme.primary, fontSize: 13)),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: AppTheme.primary,
                     side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.5)),

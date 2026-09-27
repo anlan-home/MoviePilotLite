@@ -26,6 +26,56 @@ static ASS_Library* g_assLibrary = nullptr;
 static ASS_Renderer* g_assRenderer = nullptr;
 static ASS_Track* g_assTrack = nullptr;
 
+// ── 字幕样式覆盖（用户设置 → libass selective style override）──
+// 只开 ASS_OVERRIDE_BIT_STYLE：字体名/字号/颜色/描边/属性。**不含**定位
+// (ALIGNMENT) 与边距 (MARGINS)，所以特效字幕的 \pos/\move/\k/	 完全不受影响。
+// 为什么需要：普通字幕(SRT/VTT)原先不走 libass，Exo 侧用 0.06×缩放的基准，
+// 缩放到 0.5 就只剩 3% 视频高度（真机实证：外挂明显小于内封）；libass 默认
+// 18px@PlayRes288 = 6.25%，与 mpv 一致。
+static ASS_Style g_overrideStyle;
+static int g_overrideEnabled = 0;
+static bool g_overrideReady = false;
+
+/// 把存下来的样式应用到当前渲染器（nativeInit 重建渲染器后也要重放）
+static void apply_style_override() {
+    if (!g_assRenderer || !g_overrideReady) return;
+    ass_set_selective_style_override(g_assRenderer, &g_overrideStyle);
+    ass_set_selective_style_override_enabled(
+        g_assRenderer, g_overrideEnabled ? ASS_OVERRIDE_BIT_STYLE : 0);
+    LOGI("libass style override: enabled=%d fontSize=%.1f font=%s",
+         g_overrideEnabled, g_overrideStyle.FontSize,
+         g_overrideStyle.FontName ? g_overrideStyle.FontName : "-");
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_lanplayer_LibassBridge_nativeSetStyle(JNIEnv* env, jclass clazz,
+                                               jint fontSize, jstring fontName,
+                                               jint primaryColour, jint outlineColour,
+                                               jint backColour, jint bold,
+                                               jdouble outline, jdouble shadow,
+                                               jint enabled) {
+    memset(&g_overrideStyle, 0, sizeof(g_overrideStyle));
+    g_overrideStyle.Name = (char*)"LANPlayer";
+    g_overrideStyle.FontName = fontName ? (char*)env->GetStringUTFChars(fontName, nullptr)
+                                        : (char*)"Arial";
+    if (!g_overrideStyle.FontName) g_overrideStyle.FontName = (char*)"Arial";
+    g_overrideStyle.FontSize = fontSize > 0 ? (double)fontSize : 18.0;
+    g_overrideStyle.PrimaryColour = (uint32_t)primaryColour;
+    g_overrideStyle.SecondaryColour = (uint32_t)primaryColour;
+    g_overrideStyle.OutlineColour = (uint32_t)outlineColour;
+    g_overrideStyle.BackColour = (uint32_t)backColour;
+    g_overrideStyle.Bold = bold ? 1 : 0;
+    g_overrideStyle.ScaleX = 1.0;
+    g_overrideStyle.ScaleY = 1.0;
+    g_overrideStyle.BorderStyle = 1;
+    g_overrideStyle.Outline = outline;
+    g_overrideStyle.Shadow = shadow;
+    g_overrideStyle.Encoding = 0;
+    g_overrideEnabled = enabled ? 1 : 0;
+    g_overrideReady = true;
+    apply_style_override();
+}
+
 /**
  * 初始化 libass 渲染器
  */
@@ -63,6 +113,8 @@ Java_com_lanplayer_LibassBridge_nativeInit(JNIEnv* env, jclass clazz,
                   "sans-serif", ASS_FONTPROVIDER_AUTODETECT, nullptr, 1);
     ass_set_hinting(g_assRenderer, ASS_HINTING_LIGHT);
     ass_set_use_margins(g_assRenderer, 0);
+    // 渲染器重建后重放样式覆盖（用户在播放前就改过样式的情况）
+    apply_style_override();
 
     LOGI("libass initialized: %dx%d", frameWidth, frameHeight);
     return JNI_TRUE;

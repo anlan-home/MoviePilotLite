@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:media_kit/media_kit.dart';
 
 import '../models/media_models.dart';
 import '../providers/app_providers.dart';
@@ -17,9 +16,6 @@ class LanPlayerKit {
   /// 初始化包内持久化(SharedPreferences)。幂等,可在宿主启动早期调用。
   static Future<void> ensureInitialized() async {
     if (_initialized) return;
-    // media_kit 要求使用任何 MPV API 前完成全局初始化
-    // (lanplayer 在自己的 main 里调用,MP 宿主中改由 kit 门面负责)
-    if (!kIsWeb) MediaKit.ensureInitialized();
     await StorageService.init();
     _initialized = true;
   }

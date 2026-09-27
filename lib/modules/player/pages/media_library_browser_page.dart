@@ -52,7 +52,8 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
         });
         return;
       }
-      final kitServer = launch.toKitServer(servers.first, isDefault: true);
+      final kitServer =
+          await launch.toKitServer(servers.first, isDefault: true);
       if (kitServer == null) {
         setState(() {
           _loading = false;
