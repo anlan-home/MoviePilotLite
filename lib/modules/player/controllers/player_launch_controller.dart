@@ -44,6 +44,22 @@ class ResumeContext {
     this.label,
     this.isSeries = false,
   });
+
+  /// 是否带进度信息。卡片/浏览入口只带「条目身份」(条目 id + 服务器 + 类型)时
+  /// 为 false——详情页照样立即渲染播放与选集按钮,但不显示续播进度行。
+  bool get hasProgress =>
+      (percent != null && percent! > 0) || (label != null && label!.isNotEmpty);
+}
+
+/// 面向用户的播放错误:toString 直接给出提示文案(不带 Exception: 前缀),
+/// 让播放页与 Toast 里的文案干净可读。
+class PlaybackError implements Exception {
+  final String message;
+
+  const PlaybackError(this.message);
+
+  @override
+  String toString() => message;
 }
 
 /// 内嵌播放接入层:把 MoviePilot 侧媒体身份映射到媒体服务器条目并拉起播放。
@@ -76,6 +92,10 @@ class PlayerLaunchController extends GetxService {
   /// 可用地址解析缓存:serverName -> 选中的地址 + 当时的网络指纹
   final Map<String, String> _resolvedUrl = {};
   final Map<String, String> _resolvedFp = {};
+
+  /// 「两地址均探测失败」的记录:serverName -> (判定时间, 网络指纹)。
+  /// 冷却期内直接用外网地址;同时供播放失败时给出准确的错误提示。
+  final Map<String, (DateTime, String)> _degraded = {};
 
   ResumeContext? resumeContextFor(String? pathKey) =>
       pathKey == null ? null : resumeContexts[pathKey];
@@ -239,8 +259,13 @@ class PlayerLaunchController extends GetxService {
     return service;
   }
 
-  /// 选择可用地址:内网优先(探测通过即用),否则外网,都不可达时回退内网。
-  /// 结果与网络指纹绑定缓存——切换 WiFi/流量后自动重新判定。
+  /// 选择可用地址:内网优先(探测通过即用),内网不可达时用外网播放地址。
+  ///
+  /// 两个地址都探测失败时**回退外网地址**,不再回退内网:公网/反代地址在
+  /// 任何网络下都可能可访问,而内网地址只在局域网可达——回退内网等于必然
+  /// 超时(真机表现:DioException connection timeout 10s,"获取媒体信息失败")。
+  /// 探测成功的结果按网络指纹缓存;**失败结果不写缓存**,避免一次网络抖动
+  /// 把错误地址锁死 5 分钟;仅保留 90 秒冷却,防止连续重试反复空等两轮探测。
   Future<String?> _resolveUsableUrl(
     String serverName, {
     required String lan,
@@ -248,27 +273,39 @@ class PlayerLaunchController extends GetxService {
   }) async {
     if (wan.isEmpty) return lan.isEmpty ? null : lan;
     if (lan.isEmpty) return wan;
+    if (lan == wan) return lan;
 
     final fp = await _networkFingerprint();
     final cached = _resolvedUrl[serverName];
     if (cached != null && _resolvedFp[serverName] == fp) return cached;
 
+    // 刚判定过"两地址均不可达"且网络没换:直接用外网地址,不再空等探测
+    final deg = _degraded[serverName];
+    if (deg != null &&
+        deg.$2 == fp &&
+        DateTime.now().difference(deg.$1) < const Duration(seconds: 90)) {
+      _log.warning('播放地址[$serverName] 冷却期内沿用外网地址: $wan');
+      return wan;
+    }
+
+    _log.warning('播放地址[$serverName] 探测中: 内网=$lan 外网=$wan');
     if (await _probeUrl(lan)) {
       _resolvedUrl[serverName] = lan;
       _resolvedFp[serverName] = fp;
+      _degraded.remove(serverName);
       _log.warning('播放地址[$serverName] 选内网: $lan');
       return lan;
     }
     if (await _probeUrl(wan)) {
       _resolvedUrl[serverName] = wan;
       _resolvedFp[serverName] = fp;
+      _degraded.remove(serverName);
       _log.warning('播放地址[$serverName] 选外网(内网不可达): $wan');
       return wan;
     }
-    _resolvedUrl[serverName] = lan;
-    _resolvedFp[serverName] = fp;
-    _log.warning('播放地址[$serverName] 两个地址均探测失败,回退内网: $lan');
-    return lan;
+    _degraded[serverName] = (DateTime.now(), fp);
+    _log.warning('播放地址[$serverName] 两地址均探测失败,本次回退外网地址(不缓存): $wan');
+    return wan;
   }
 
   /// ── 媒体服务器本机账号 ──
@@ -335,17 +372,21 @@ class PlayerLaunchController extends GetxService {
     }
   }
 
-  /// 轻量连通性探测(走双栈竞速,IPv4/IPv6 任一可达即通过)
+  /// 轻量连通性探测(走双栈竞速,IPv4/IPv6 任一可达即通过)。
+  /// 超时给到 5 秒:HTTPS 反代需要 TLS 握手 + 公网往返,原来的 2 秒连接
+  /// 超时会把可用的反代地址误判为不可达(→ 进而选错地址、播放超时)。
   Future<bool> _probeUrl(String base) async {
     try {
       final dio = kit.createDualStackDio(
         baseUrl: base,
-        connectTimeout: const Duration(seconds: 2),
-        receiveTimeout: const Duration(seconds: 3),
+        connectTimeout: const Duration(seconds: 5),
+        receiveTimeout: const Duration(seconds: 5),
       );
       final r = await dio.get<dynamic>('/System/Info/Public');
       return r.statusCode != null && r.statusCode! < 500;
-    } catch (_) {
+    } catch (e) {
+      // 打印失败原因(超时/TLS/404),便于从日志区分"地址不可达"与"配置写错"
+      _log.warning('播放地址探测失败[$base]: $e');
       return false;
     }
   }
@@ -374,6 +415,7 @@ class PlayerLaunchController extends GetxService {
   void invalidateResolvedUrl() {
     _resolvedUrl.clear();
     _resolvedFp.clear();
+    _degraded.clear();
   }
 
   kit.ServerType mapKitType(String type) {
@@ -390,7 +432,9 @@ class PlayerLaunchController extends GetxService {
     }
   }
 
-  /// exists 映射(GET /api/v1/mediaserver/exists,按 tmdbid/标题/年份)。
+  /// exists 映射:优先问 MP 自己的媒体库同步库(GET /api/v1/mediaserver/exists,
+  /// 本地数据库查询,实测 11~27ms 且条目 id 与媒体服务器一致),
+  /// 未命中或调用失败时回退媒体服务器标题搜索(原有路径)。
   /// 返回命中的服务器名与条目 id;未收录返回 null。
   Future<PlayProbe?> probeExists({
     required String title,
@@ -400,12 +444,25 @@ class PlayerLaunchController extends GetxService {
     int? season,
   }) async {
     await _ensureKit();
-        final isTv = (mtype ?? '').contains('剧') ||
+    final isTv = (mtype ?? '').contains('剧') ||
         (mtype ?? '').toLowerCase().contains('tv');
     final cacheKey = '$mtype|$tmdbId|$season|$title';
     if (_probeCache.containsKey(cacheKey)) {
       return _probeCache[cacheKey];
     }
+    final byMp = await _probeByMpLibrary(
+      title: title,
+      year: year,
+      mtype: mtype,
+      tmdbId: tmdbId,
+      isTv: isTv,
+    );
+    if (byMp != null) {
+      _probeCache[cacheKey] = byMp;
+      return byMp;
+    }
+    // ignore: avoid_print
+    print('[PlayerLaunch] MP 本地库未命中,回退媒体服务器搜索: $title (tmdb=$tmdbId)');
     final servers = await enabledServers();
     for (final s in servers) {
       final kitServer = await toKitServer(s);
@@ -440,6 +497,117 @@ class PlayerLaunchController extends GetxService {
     }
     _probeCache[cacheKey] = null;
     return null;
+  }
+
+  /// MP 侧类型取值:MediaType 枚举只有「电影」「电视剧」两个中文值。
+  /// 判不出来返回 null(此时不用 MP 本地库路径,直接回退搜索)。
+  String? _mpMediaType(String? mtype) {
+    final t = (mtype ?? '').toLowerCase();
+    if (t.isEmpty) return null;
+    if (t.contains('剧') || t.contains('tv')) return '电视剧';
+    if (t.contains('电影') || t.contains('movie')) return '电影';
+    return null;
+  }
+
+  /// 用 MP 自己的媒体库同步库解析「条目 id」:GET /api/v1/mediaserver/exists,
+  /// 参数用 tmdbid + mtype(命中即返回 data.item.id = 媒体服务器条目 id)。
+  ///
+  /// 2026-09-28 实测(用户服务器):剧集 tmdbid=124595 → id=18070、
+  /// 三部电影全部命中且与媒体服务器条目 id 一致,耗时 11~27ms。
+  ///
+  /// 实测陷阱:
+  /// 1) **必须带 mtype**——只给 tmdbid 即使数据存在也返回不存在;
+  /// 2) **不能带 season**——MP 的季信息不全时会把存在的条目判为不存在
+  ///    (与选集面板"季对不上"同源),季校验交给上层用真实分集数据判断。
+  Future<PlayProbe?> _probeByMpLibrary({
+    required String title,
+    String? year,
+    String? mtype,
+    int? tmdbId,
+    bool isTv = false,
+  }) async {
+    try {
+      return await _probeByMpLibraryInner(
+        title: title,
+        year: year,
+        mtype: mtype,
+        tmdbId: tmdbId,
+        isTv: isTv,
+      );
+    } catch (e) {
+      // 任何异常都不影响主流程:回退媒体服务器搜索
+      _log.warning('MP 本地库身份解析异常,回退搜索: $e');
+      return null;
+    }
+  }
+
+  Future<PlayProbe?> _probeByMpLibraryInner({
+    required String title,
+    String? year,
+    String? mtype,
+    int? tmdbId,
+    bool isTv = false,
+  }) async {
+    final mpType = _mpMediaType(mtype);
+    if (mpType == null) return null;
+    final servers = await enabledServers();
+    if (servers.isEmpty) return null;
+    final target = servers.first;
+
+    Future<String?> ask(Map<String, dynamic> query) async {
+      try {
+        final r = await _api.get<dynamic>(
+          '/api/v1/mediaserver/exists',
+          queryParameters: query,
+        );
+        final data = r.data;
+        if (data is! Map || data['success'] != true) return null;
+        final d = data['data'];
+        final item = d is Map ? d['item'] : null;
+        final id = item is Map ? (item['id']?.toString() ?? '') : '';
+        return id.isEmpty ? null : id;
+      } catch (e) {
+        _log.warning('MP 本地库身份查询失败: $e');
+        return null;
+      }
+    }
+
+    // 先按 TMDB 标识精确查,再退回标题(+年份)——两者都是 MP 本地查询
+    var id = tmdbId != null && tmdbId > 0
+        ? await ask({'tmdbid': tmdbId, 'mtype': mpType})
+        : null;
+    id ??= await ask({
+      'title': title,
+      'mtype': mpType,
+      if (year != null && year.isNotEmpty) 'year': year,
+    });
+    if (id == null) return null;
+
+    // 多服务器时 MP 的返回不带服务器名:用一次条目直查确认这条 id 属于目标服务器,
+    // 确认不了就走回退搜索(单服务器场景直接采信,不再打媒体服务器)
+    if (servers.length > 1) {
+      final kitTarget = await toKitServer(target);
+      final svc = kitTarget == null ? null : _serviceFor(kitTarget);
+      if (svc == null) return null;
+      try {
+        final it = await svc
+            .getItemDetails(id)
+            .timeout(const Duration(seconds: 8));
+        if (it.id.isEmpty) return null;
+      } catch (_) {
+        return null;
+      }
+    }
+    _log.warning(
+        'MP本地库命中[$title] tmdb=$tmdbId type=$mpType -> 条目=$id 服务器=${target.name}');
+    // ignore: avoid_print
+    print('[PlayerLaunch] MP 本地库命中: $title tmdb=$tmdbId type=$mpType '
+        '-> 条目=$id 服务器=${target.name}');
+    return PlayProbe(
+      serverName: target.name,
+      itemId: id,
+      isSeries: isTv,
+    );
   }
 
   /// 网页播放回退:GET /api/v1/mediaserver/play/{itemid} 取播放页地址
@@ -534,26 +702,72 @@ class PlayerLaunchController extends GetxService {
         );
       }
     }
-    final item = await svc.getItemDetails(itemId);
+    final kit.MediaItem item;
+    try {
+      item = await svc.getItemDetails(itemId);
+    } catch (e) {
+      throw _friendlyPlaybackError(e, srv);
+    }
     var eps = episodes;
     var targetId = itemId;
-    if (autoNextEpisode && item.type == kit.MediaType.series) {
-      eps ??= await svc.getEpisodes(item.id);
-      if (eps.isNotEmpty) {
+    // 剧集标识:剧集条目用自身 id;「单集」条目(如从继续观看进入——Emby 的
+    // 正在播放记录是单集级别)用其 seriesId。
+    // 此前只在 type==series 时加载全集,单集入口拿不到 episodes → 播放页
+    // 没有选集面板、下一集禁用、播完不连播(lanplayer 同源坑 9358eaf:
+    // "home 的继续观看分支推单集详情 → episodes 为空没有选集按钮")。
+    final seriesId = item.type == kit.MediaType.series
+        ? item.id
+        : (item.type == kit.MediaType.episode ? (item.seriesId ?? '') : '');
+    if (autoNextEpisode && seriesId.isNotEmpty) {
+      eps ??= await svc.getEpisodes(seriesId);
+      if (eps.isNotEmpty && item.type == kit.MediaType.series) {
+        // 剧集入口:定位「下一集未看完的」
         final next = eps.firstWhere(
           (e) => (e.watchProgress ?? 0) < 1,
           orElse: () => eps!.first,
         );
         targetId = next.id;
       }
+      // 单集入口:targetId 保持为该集(尊重续播点),此处只补全选集列表
     }
-    final session = await kit.PlaybackResolver.resolve(
-      service: svc,
-      server: srv,
-      itemId: targetId,
-      episodes: eps,
-    );
+    final kit.PlayerSession session;
+    try {
+      session = await kit.PlaybackResolver.resolve(
+        service: svc,
+        server: srv,
+        itemId: targetId,
+        episodes: eps,
+      );
+    } catch (e) {
+      throw _friendlyPlaybackError(e, srv);
+    }
     return fromStart ? _sessionFromStart(session) : session;
+  }
+
+  /// 连接类异常 → 面向用户的提示(带当前地址,并区分"两地址均不可达"
+  /// 与"单个地址连不上")。非连接类异常原样返回,不掩盖真实原因。
+  Object _friendlyPlaybackError(Object e, kit.MediaServer srv) {
+    final msg = e.toString();
+    final lower = msg.toLowerCase();
+    final isConn = lower.contains('timeout') ||
+        lower.contains('socketexception') ||
+        lower.contains('connection refused') ||
+        lower.contains('connection error') ||
+        lower.contains('failed host lookup') ||
+        lower.contains('所有地址连接失败');
+    if (!isConn) return e;
+    if (_degraded.containsKey(srv.name)) {
+      return PlaybackError(
+        '无法连接媒体服务器\n'
+        '内网地址与外网(反代)地址均探测失败\n'
+        '当前地址:${srv.url}\n'
+        '请检查手机网络,或用浏览器确认该反代地址可正常打开',
+      );
+    }
+    return PlaybackError(
+      '无法连接媒体服务器:${srv.url}\n'
+      '请检查网络,或在「设置 → 系统设置 → 媒体服务器」中更换地址',
+    );
   }
 
   /// 从媒体服务器拉取条目详情(用于反查 TMDB 身份)
@@ -566,7 +780,14 @@ class PlayerLaunchController extends GetxService {
     if (server == null) return null;
     final service = _serviceFor(server);
     if (service == null) return null;
-    return service.getItemDetails(itemId);
+    try {
+      return await service.getItemDetails(itemId);
+    } catch (e) {
+      // 与播放路径同源(「最近添加」卡片点进详情页会先走这里):连接类失败
+      // 换成人话提示,原始超时异常只写日志。
+      _log.warning('fetchKitItem[${server.name}] 失败: $e');
+      throw _friendlyPlaybackError(e, server);
+    }
   }
 
   /// 详情页播放入口(电影直连 / 剧集默认播下一集未看完的)。

@@ -14,6 +14,10 @@ import '../pages/episode_picker_sheet.dart';
 class DetailPlaySection extends StatefulWidget {
   final MediaDetail detail;
   final bool isLoading;
+
+  /// 路由媒体标识(如 tmdb:124595)。MP 详情加载完成前 detail 里还没有
+  /// TMDB 标识,靠它才能第一时间取到卡片写入的条目身份并渲染播放入口。
+  final String? mediaKey;
   final bool canSearch;
   final bool canSubscribe;
   final bool isSubscribed;
@@ -26,6 +30,7 @@ class DetailPlaySection extends StatefulWidget {
     super.key,
     required this.detail,
     required this.isLoading,
+    this.mediaKey,
     required this.canSearch,
     required this.canSubscribe,
     required this.isSubscribed,
@@ -44,6 +49,9 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
   PlayProbe? _probe;
   String? _probedTitle;
 
+  /// 上次探测用的 TMDB 标识:详情到位后拿到标识时用它判断要不要重探一次
+  int? _probedTmdbId;
+
   /// 实时观看进度(从媒体服务器单条目接口刷新),优先于上下文快照
   double? _livePercent;
   String? _livePercentItemId;
@@ -56,11 +64,22 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
   double? _statsValue;
 
   /// 条目上下文:按详情的媒体标识(tmdb:xxx)从控制器缓存读取,
-  /// 非一次性消费——页面反复进出结果一致,首次进入也立即可用
+  /// 非一次性消费——页面反复进出结果一致,首次进入也立即可用。
+  /// MP 详情未到位时退回路由标识里的 TMDB(卡片入口正是靠这一步做到
+  /// "进页面就有可点的播放/选集按钮")。
   ResumeContext? get _resume {
-    final tmdbId = widget.detail.tmdb_id;
-    if (tmdbId == null || tmdbId <= 0) return null;
-    return PlayerLaunchController.to.resumeContexts['tmdb:$tmdbId'];
+    final id = _tmdbId;
+    if (id == null || id <= 0) return null;
+    return PlayerLaunchController.to.resumeContexts['tmdb:$id'];
+  }
+
+  /// TMDB 标识:详情优先(加载完成后最准),否则取路由标识
+  int? get _tmdbId {
+    final fromDetail = widget.detail.tmdb_id;
+    if (fromDetail != null && fromDetail > 0) return fromDetail;
+    final key = widget.mediaKey ?? '';
+    if (!key.startsWith('tmdb:')) return null;
+    return int.tryParse(key.substring('tmdb:'.length));
   }
 
   /// 进度行的真实数据源:实时值优先,退回上下文快照
@@ -205,6 +224,15 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
     if (newTitle != null && newTitle.isNotEmpty && newTitle != _probedTitle) {
       _runProbe();
     }
+    // 媒体标识到位后(预填充阶段没有 TMDB)用更精确的身份重探一次:
+    // 按标题查是兜底,按 TMDB 查才精确
+    final tmdb = _tmdbId;
+    if (tmdb != null &&
+        tmdb > 0 &&
+        tmdb != _probedTmdbId &&
+        (newTitle == null || newTitle.isEmpty || newTitle == _probedTitle)) {
+      _runProbe();
+    }
     // 详情加载完成后媒体标识(tmdb)才可用,此时才能取上下文并刷新进度
     _maybeRefreshResumeProgress();
   }
@@ -214,11 +242,13 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
     final title = detail.title ?? '';
     if (title.isEmpty) return;
     _probedTitle = title;
+    final tmdbId = _tmdbId;
+    _probedTmdbId = tmdbId;
     final probe = await PlayerLaunchController.to.probeExists(
       title: title,
       year: detail.year,
       mtype: detail.type,
-      tmdbId: detail.tmdb_id,
+      tmdbId: tmdbId,
       season: detail.season,
     );
     if (!mounted) return;
@@ -228,9 +258,24 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
     });
   }
 
+  /// 是否已有「条目身份」(来自卡片/浏览入口的上下文)。
+  /// 播放入口只需要条目 id,不需要等 MP 详情加载完,也不需要等媒体服务器探测
+  /// ——探测只为「没有身份的入口」(搜索/订阅等)服务。
+  bool get _hasIdentity => _resume != null;
+
   bool get _showPlay =>
-      (PlayerLaunchController.to.canNativePlay && _probeDone && _probe != null) ||
-      (PlayerLaunchController.to.canNativePlay && _resume != null);
+      PlayerLaunchController.to.canNativePlay &&
+      (_hasIdentity || (_probeDone && _probe != null));
+
+  /// 续播进度行只在真有进度信息时显示:纯身份上下文(如「最近添加」卡片)
+  /// 不带进度,不应显示「上次观看 · 已看 0%」这种无意义文案。
+  bool get _showResumeLine {
+    if (!_showPlay || _resume == null) return false;
+    if (_liveResumeLabel != null) return true;
+    if (_episodeStatsLabel != null) return true;
+    if (_resumePercent > 0) return true;
+    return _resume!.hasProgress;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -239,9 +284,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
 
     if (_showPlay) {
       final probe = _probe;
-      final hasResume = _resume != null;
-      final isSeries = (probe?.isSeries ?? false) ||
-          (hasResume && (_resume!.isSeries || (_resume!.percent ?? 0) > 0));
+      final hasResume = _hasIdentity;
       // 按钮文案跟随实时进度:有进度或集数统计都算「继续播放」
       final hasHistory = _resumePercent > 0 || _episodeStatsLabel != null;
       final pillText = hasResume
@@ -254,9 +297,9 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
           child: _PillButton(
             icon: Icons.play_arrow_rounded,
             text: pillText,
-            onPressed: widget.isLoading
-                ? null
-                : () {
+            // 有身份即可点(条目 id 已就绪);无身份时才等探测结果
+            onPressed: (hasResume || probe != null)
+                ? () {
                     final titleText = widget.detail.title ?? '';
                     final subText = (widget.detail.year ?? '').isEmpty
                         ? null
@@ -277,23 +320,19 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
                         title: titleText,
                         subtitle: subText,
                       );
-                    } else if (_resume != null) {
-                      PlayerLaunchController.to.playByItemId(
-                        itemId: _resume!.itemId,
-                        serverName: _resume!.serverName,
-                        serverType: _resume!.serverType,
-                        title: titleText,
-                        subtitle: subText,
-                      );
                     }
-                  },
+                  }
+                : null,
           ),
         ),
       );
       children.add(const SizedBox(width: 10));
-      // 选集入口:上下文或探测确认是剧集时可用
-      if ((probe != null && probe.isSeries) ||
-          (hasResume && (_resume!.isSeries || (probe == null && _probeDone)))) {
+      // 选集入口:身份/探测任一确认是剧集即可用(身份来自卡片类型,立即可判)
+      final showEpisodes = (probe?.isSeries ?? false) ||
+          (hasResume &&
+              (_resume!.isSeries ||
+                  (probe == null && (_resume!.percent ?? 0) > 0)));
+      if (showEpisodes) {
         children.add(_CircleButton(
           icon: Icons.list_rounded,
           tooltip: '选集',
@@ -394,7 +433,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
       mainAxisSize: MainAxisSize.min,
       children: [
         Row(children: children),
-        if (_showPlay && _resume != null) _buildResumeLine(primary),
+        if (_showResumeLine) _buildResumeLine(primary),
       ],
     );
   }
@@ -490,6 +529,9 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
           .getItemDetails(seriesId)
           .timeout(const Duration(seconds: 12));
       if (!mounted) return;
+      // ignore: avoid_print
+      print('[DetailPlay] 打开选集: 条目=$seriesId 类型=${seriesItem.type} '
+          '服务器=${server.url} 详情季=${widget.detail.season}');
       await showEpisodePickerSheet(
         context: context,
         service: service,

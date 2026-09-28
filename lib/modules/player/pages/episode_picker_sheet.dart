@@ -48,12 +48,15 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
   bool _loading = true;
   String? _error;
   List<kit.MediaItem> _episodes = [];
-  int _selectedSeason = 0;
+
+  /// 当前选中的季。详情页给了季号就先记着,加载完成后按数据校正
+  /// (给的季不存在时兜底切换,避免面板空白)。
+  int? _selectedSeason;
 
   @override
   void initState() {
     super.initState();
-    _selectedSeason = widget.currentSeason ?? 1;
+    _selectedSeason = widget.currentSeason;
     _load();
   }
 
@@ -64,17 +67,52 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
           .getEpisodes(widget.series.id, seasonId: null)
           .timeout(const Duration(seconds: 15));
       if (!mounted) return;
+      final season = _pickInitialSeason(eps);
+      // ignore: avoid_print
+      print('[EpisodePicker] 剧集=${widget.series.id} 共加载=${eps.length} 集 '
+          '实际季=${eps.map((e) => e.seasonNumber).toSet().toList()} '
+          '选中季=$season 详情季=${widget.currentSeason}');
       setState(() {
         _episodes = eps;
+        _selectedSeason = season;
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
+      // ignore: avoid_print
+      print('[EpisodePicker] 加载失败: $e');
       setState(() {
         _error = '分集加载失败';
         _loading = false;
       });
     }
+  }
+
+  /// 决定面板初始选中的季。
+  ///
+  /// 真机案例:MP 详情页不提供季号,而媒体库里只有第 2 季——原来硬编码默认
+  /// 第 1 季,按季过滤后一集都显示不出来(面板一片空白)。规则:
+  /// 1) 详情页给了季号且该季真实存在 → 用它;
+  /// 2) 否则优先落在「正在看的那一集」所在的季;
+  /// 3) 再否则取数据里第一个存在的季。
+  int _pickInitialSeason(List<kit.MediaItem> eps) {
+    final available = <int>{};
+    for (final e in eps) {
+      final n = e.seasonNumber ?? 1;
+      available.add(n > 0 ? n : 1);
+    }
+    final sorted = available.toList()..sort();
+    final preferred = widget.currentSeason;
+    if (preferred != null && available.contains(preferred)) return preferred;
+    if (sorted.isEmpty) return preferred ?? 1;
+    final inProgress = eps
+        .where((e) => (e.watchProgress ?? 0) > 0 && (e.watchProgress ?? 0) < 1)
+        .toList();
+    if (inProgress.isNotEmpty) {
+      final n = inProgress.first.seasonNumber ?? 1;
+      if (available.contains(n)) return n;
+    }
+    return sorted.first;
   }
 
   List<int> get _seasons {
@@ -87,9 +125,11 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
     return list.isEmpty ? const [1] : list;
   }
 
-  List<kit.MediaItem> get _currentEpisodes => _episodes
-      .where((e) => (e.seasonNumber ?? 1) == _selectedSeason)
-      .toList();
+  List<kit.MediaItem> get _currentEpisodes {
+    final target = _selectedSeason;
+    if (target == null) return const [];
+    return _episodes.where((e) => (e.seasonNumber ?? 1) == target).toList();
+  }
 
   static String _formatDuration(int seconds) {
     final m = seconds ~/ 60;
@@ -146,7 +186,21 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
                   controller: scrollController,
                   children: [
                     _buildSeasonChips(),
-                    ..._buildEpisodeRows(),
+                    if (_currentEpisodes.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 44),
+                        child: Center(
+                          child: Text(
+                            '该季暂无分集',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.white.withOpacity(0.45),
+                            ),
+                          ),
+                        ),
+                      )
+                    else
+                      ..._buildEpisodeRows(),
                   ],
                 ),
               ),

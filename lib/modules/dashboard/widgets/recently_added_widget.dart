@@ -488,13 +488,20 @@ Future<void> _openMediaDetail(LatestMedia media, {bool withResume = false}) asyn
       serverType: media.serverType,
     );
     final tmdbId = item?.tmdbId;
-    if (withResume) {
+    // 条目身份先写进上下文:详情页据此立即渲染播放与选集按钮并可直接开播
+    // (播放入口只需要条目 id),不必等 MP 详情加载完、也不必等媒体服务器探测。
+    // 「继续观看」入口额外带上进度,用于详情页的续播进度行。
+    if (tmdbId != null && tmdbId > 0) {
       launch.resumeContexts['tmdb:$tmdbId'] = ResumeContext(
         itemId: media.id,
         serverName: media.libraryName,
         serverType: media.serverType,
-        percent: media.percent == null ? null : media.percent! / 100,
-        label: media.subtitle.isNotEmpty ? media.subtitle : null,
+        percent: withResume && media.percent != null
+            ? media.percent! / 100
+            : null,
+        label: withResume && media.subtitle.isNotEmpty
+            ? media.subtitle
+            : null,
         isSeries: media.type.contains('剧') ||
             media.type.toLowerCase().contains('tv'),
       );

@@ -1262,6 +1262,7 @@ class MediaDetailPage extends GetWidget<MediaDetailController> {
       return DetailPlaySection(
         detail: detail,
         isLoading: isLoading,
+        mediaKey: controller.args.path,
         canSearch: canSearch,
         canSubscribe: canSubscribe,
         isSubscribed: isSubscribed,
