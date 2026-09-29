@@ -18,6 +18,13 @@ class ServerApiVersionService extends GetxService {
   /// baseUrl -> 实测学到的形态(true = 需要新式)。优先级高于能力表。
   final _learnedMode = <String, bool>{};
 
+  /// 搜索模块**专用**的形态记忆:baseUrl -> 该服务器媒体搜索是否需要 media_source。
+  ///
+  /// 为什么单独存:实测结论只对「媒体搜索」这一个接口成立。若写进全局 [_learnedMode]
+  /// (isV3),会连带影响信封解封、详情页/订阅/字幕搜索/存储/文件管理等模块的形态判断
+  /// ——搜索端点学到的形态不该污染其它 endpoint。
+  final _searchMode = <String, bool>{};
+
   final _inFlight = <String, Future<Set<String>?>>{};
   int _generation = 0;
 
@@ -47,13 +54,18 @@ class ServerApiVersionService extends GetxService {
     return detection;
   }
 
-  /// 服务端广告的来源取值(未探测到返回 null)
-  Future<Set<String>?> sourcesCached() async => mediaSourceValues();
-
-  /// 记录"这台服务器需要新式形态(带 media_source)"——由 422 响应实测学到
-  void markMediaSourceRequired() {
+  /// 搜索模块专用:读取该服务器的形态记忆(null = 未知,交由能力表判断)。
+  /// 这是"上次搜索哪一形态赢了"的结论,只用于搜索请求的形态选择。
+  bool? get searchNeedsMediaSource {
     final key = _normalizeBaseUrl(_apiClient.baseUrl);
-    if (key != null) _learnedMode[key] = true;
+    return key == null ? null : _searchMode[key];
+  }
+
+  /// 搜索模块专用:记住该服务器的媒体搜索是否需要 media_source。
+  /// **不写全局 isV3**——搜索形态不参与其它模块的契约判断。
+  void markSearchNeedsMediaSource(bool required) {
+    final key = _normalizeBaseUrl(_apiClient.baseUrl);
+    if (key != null) _searchMode[key] = required;
   }
 
   /// 兼容旧调用:详情页 422 翻转重试成功后标记该服务器实际认哪种形态
@@ -68,6 +80,7 @@ class ServerApiVersionService extends GetxService {
     _generation++;
     _sources.clear();
     _learnedMode.clear();
+    _searchMode.clear();
     _inFlight.clear();
   }
 
@@ -77,6 +90,7 @@ class ServerApiVersionService extends GetxService {
     _generation++;
     _sources.remove(key);
     _learnedMode.remove(key);
+    _searchMode.remove(key);
     _inFlight.clear();
   }
 

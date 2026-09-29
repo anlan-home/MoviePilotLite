@@ -380,11 +380,15 @@ class SearchMediaController extends GetxController {
         (path: '/api/v1/search/media/$mediaSearchKey', query: baseQuery),
       ];
     }
-    // ③ 有媒体标识且按标题检索:优先新式(数字标识 + media_source),失败再退回旧式
+    // ③ 有媒体标识且按标题检索:优先新式(数字标识 + media_source),失败再退回旧式。
+    // 形态优先级:搜索自己的实测记忆 > 服务端能力表;已知不需要新形态时不再打探测。
     final legacy =
         (path: '/api/v1/search/media/$mediaSearchKey', query: baseQuery);
-    final v3 = await _serverApiVersionService.isV3();
-    final sources = await _serverApiVersionService.mediaSourceValues();
+    final learned = _serverApiVersionService.searchNeedsMediaSource;
+    final preferNew = learned ?? await _serverApiVersionService.isV3();
+    final sources = learned == false
+        ? null
+        : await _serverApiVersionService.mediaSourceValues();
     final newForm = (
       path: '/api/v1/search/media/${identity.id}',
       query: <String, dynamic>{
@@ -392,7 +396,7 @@ class SearchMediaController extends GetxController {
         'media_source': _pickSourceValue(identity.source, sources),
       },
     );
-    return v3 ? [newForm, legacy] : [legacy, newForm];
+    return preferNew ? [newForm, legacy] : [legacy, newForm];
   }
 
   /// 选服务端认的来源值:优先用服务端能力表里的写法(大小写/别名更稳),
@@ -412,28 +416,53 @@ class SearchMediaController extends GetxController {
     return source;
   }
 
-  /// 从服务端错误响应里提取可读原因(FastAPI 422 会写明缺哪个字段)
+  /// 从服务端错误响应里提取可读原因。要兼容三种真实出现的形状:
+  /// 1) **裸数组**:服务端自带信封 `{success,message,data:[...]}` 被 ApiClient 解封后,
+  ///    校验错误列表直接成为 response.data(真机日志实证:422 拿到的就是这一种);
+  /// 2) **FastAPI 原始体**:`{detail:[{loc:[...],msg:'Field required'}]}`;
+  /// 3) **未解封的信封**:`{message:..., data:[...]}`。
+  /// 字段名取 loc/location 的最后一段,原因取 msg/message;都没有时退回顶层 msg/message。
   String _serverErrorReason(dynamic body) {
-    if (body is! Map) return '';
     final parts = <String>[];
-    final message = body['message']?.toString().trim() ?? '';
-    if (message.isNotEmpty) parts.add(message);
-    final detail = body['data'];
-    if (detail is List) {
-      for (final item in detail.whereType<Map>()) {
-        final field = (item['location'] ?? item['loc']);
-        final name = field is List && field.isNotEmpty
-            ? field.last.toString()
-            : field?.toString() ?? '';
-        final msg = item['message']?.toString() ?? item['msg']?.toString() ?? '';
-        if (name.isNotEmpty && msg.isNotEmpty) {
-          parts.add('$name: $msg');
-        } else if (msg.isNotEmpty) {
-          parts.add(msg);
-        }
+
+    void addItem(Object? item) {
+      if (item is! Map) return;
+      final loc = item['loc'] ?? item['location'];
+      var name = '';
+      if (loc is List && loc.isNotEmpty) {
+        name = loc.last.toString();
+      } else if (loc != null) {
+        name = loc.toString();
+      }
+      final reason = (item['msg'] ?? item['message'] ?? '').toString().trim();
+      if (name.isNotEmpty && reason.isNotEmpty) {
+        parts.add('$name: $reason');
+      } else if (reason.isNotEmpty) {
+        parts.add(reason);
       }
     }
-    return parts.join(' | ');
+
+    if (body is List) {
+      for (final item in body) {
+        addItem(item);
+      }
+    } else if (body is Map) {
+      for (final key in const ['detail', 'data']) {
+        final list = body[key];
+        if (list is List) {
+          for (final item in list) {
+            addItem(item);
+          }
+        }
+      }
+      if (parts.isEmpty) {
+        final message = (body['message'] ?? body['msg'] ?? '').toString().trim();
+        if (message.isNotEmpty) parts.add(message);
+      }
+    }
+
+    // 去重后拼接(同一字段可能在 detail 与 data 里各出现一次)
+    return parts.toSet().join(' | ');
   }
 
   Map<String, String> _streamQueryParameters() {
@@ -624,13 +653,11 @@ class SearchMediaController extends GetxController {
       final status = response.statusCode ?? 0;
       if (status < 400) {
         winnerHasSource = form.query.containsKey('media_source');
-        // 形态确认:记住这台服务器认哪种,后续请求不再试错
+        // 形态确认:记住这台服务器认哪种,后续搜索不再试错。
+        // 只写搜索专用的形态记忆——写进全局 isV3 会连带影响信封解封、详情页、
+        // 订阅、字幕搜索、存储等模块的契约判断(评审阻塞项)。
         if (searchType == SearchType.media) {
-          if (winnerHasSource) {
-            _serverApiVersionService.markMediaSourceRequired();
-          } else if (forms.length > 1) {
-            _serverApiVersionService.markV3(_apiClient.baseUrl, false);
-          }
+          _serverApiVersionService.markSearchNeedsMediaSource(winnerHasSource);
         }
         break;
       }
