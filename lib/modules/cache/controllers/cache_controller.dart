@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/cupertino.dart';
 import 'package:get/get.dart';
+import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 
@@ -20,6 +21,7 @@ class CacheController extends GetxController {
   final showActions = false.obs;
 
   final ApiClient _apiClient = Get.find<ApiClient>();
+  final AppLog _log = Get.find<AppLog>();
 
   @override
   void onInit() {
@@ -231,4 +233,119 @@ class CacheController extends GetxController {
     final last = input[input.length - 1];
     return (first == '{' && last == '}') || (first == '[' && last == ']');
   }
+
+  // ---------------- 缓存管理动作（v2/v3.1.5 双线一致） ----------------
+
+  Future<({bool ok, String message})> _runAction(
+    String label,
+    Future<dynamic> Function() action,
+  ) async {
+    try {
+      final response = await action();
+      final status = response.statusCode ?? 0;
+      if (status >= 400) {
+        return (ok: false, message: '$label失败 (HTTP $status)');
+      }
+      final data = response.data;
+      if (data is Map && data['success'] == false) {
+        return (
+          ok: false,
+          message: (data['message']?.toString() ?? '').isNotEmpty
+              ? data['message'].toString()
+              : '$label失败',
+        );
+      }
+      return (ok: true, message: '$label成功');
+    } catch (e, st) {
+      _log.handle(e, stackTrace: st, message: '$label异常');
+      return (ok: false, message: '$label失败，请稍后重试');
+    }
+  }
+
+  /// POST /api/v1/torrent/cache/refresh 刷新种子缓存
+  Future<({bool ok, String message})> refreshTorrentCache() async {
+    final result = await _runAction(
+      '刷新种子缓存',
+      () => _apiClient.post<dynamic>('/api/v1/torrent/cache/refresh'),
+    );
+    if (result.ok) await fetchCache();
+    return result;
+  }
+
+  /// DELETE /api/v1/torrent/cache 清空种子缓存
+  Future<({bool ok, String message})> clearTorrentCache() => _runAction(
+        '清空种子缓存',
+        () => _apiClient.request<dynamic>(
+          '/api/v1/torrent/cache',
+          RequestMethod.delete,
+          <String, dynamic>{},
+        ),
+      );
+
+  /// DELETE /api/v1/torrent/cache/{domain}/{hash} 删除单条种子缓存
+  Future<({bool ok, String message})> deleteTorrentCacheItem(
+    String domain,
+    String hash,
+  ) => _runAction(
+        '删除缓存',
+        () => _apiClient.request<dynamic>(
+          '/api/v1/torrent/cache/$domain/$hash',
+          RequestMethod.delete,
+          <String, dynamic>{},
+        ),
+      );
+
+  /// POST /api/v1/torrent/cache/reidentify/{domain}/{hash} 重新识别种子
+  Future<({bool ok, String message})> reidentifyTorrentCacheItem(
+    String domain,
+    String hash,
+  ) => _runAction(
+        '重新识别',
+        () => _apiClient.post<dynamic>(
+          '/api/v1/torrent/cache/reidentify/$domain/$hash',
+        ),
+      );
+
+  /// DELETE /api/v1/tmdb/cache 清空 TMDB 识别缓存
+  Future<({bool ok, String message})> clearTmdbCache() => _runAction(
+        '清空 TMDB 识别缓存',
+        () => _apiClient.request<dynamic>(
+          '/api/v1/tmdb/cache',
+          RequestMethod.delete,
+          <String, dynamic>{},
+        ),
+      );
+
+  /// GET /api/v1/tmdb/cache 查询 TMDB 识别缓存（返回原始列表供页面展示）
+  Future<List<Map<String, dynamic>>> loadTmdbCache() async {
+    try {
+      final response = await _apiClient.get<dynamic>('/api/v1/tmdb/cache');
+      if ((response.statusCode ?? 0) >= 400) return const [];
+      final data = response.data;
+      final rawList = data is List
+          ? data
+          : data is Map
+              ? data['data']
+              : null;
+      if (rawList is! List) return const [];
+      return rawList
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } catch (e, st) {
+      _log.handle(e, stackTrace: st, message: '获取 TMDB 识别缓存失败');
+      return const [];
+    }
+  }
+
+  /// DELETE /api/v1/tmdb/cache/{cache_key} 删除单条 TMDB 识别缓存
+  Future<({bool ok, String message})> deleteTmdbCacheItem(String cacheKey) =>
+      _runAction(
+        '删除识别缓存',
+        () => _apiClient.request<dynamic>(
+          '/api/v1/tmdb/cache/${Uri.encodeComponent(cacheKey)}',
+          RequestMethod.delete,
+          <String, dynamic>{},
+        ),
+      );
 }

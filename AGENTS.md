@@ -27,7 +27,7 @@
 - **Build release APK**: `flutter build apk --release --dart-define=FLUTTER_APP_ENV=release`
 
 ### Gotchas
-- `dart run build_runner build` regenerates `*.freezed.dart` files. The committed `form_block_models.freezed.dart` has a known duplicate class issue (`InfoCardRowMenu` used for both `menu` and `group` constructors in `InfoCardRow`). **Do not regenerate** this file unless the source model is fixed — the build succeeds only with the committed version.
+- `dart run build_runner build` regenerates `*.freezed.dart` files. The historical `form_block_models` duplicate-class defect (menu/group constructors colliding) **has been fixed in the source model** — regeneration is allowed; still verify `git status` so only intended generated files change. Known unrelated failure: `flutter_gen_runner` fails to parse its config (exit 78) and aborts the run after json/freezed/hive builders complete; asset generation via flutter_gen is currently broken and needs the `rive` integration pruned or the package added.
 - The project targets **Android/iOS/macOS only** — no web or linux platform. Cannot run interactively in a headless VM; use `flutter build apk --debug` to verify builds.
 - First Android build downloads Realm native binaries and CMake automatically — this can take ~2 minutes extra.
 - `pubspec.lock` may show minor version drifts after `flutter pub get`; restore with `git checkout -- pubspec.lock` if you don't intend to update deps.

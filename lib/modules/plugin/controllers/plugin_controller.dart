@@ -5,6 +5,8 @@ import 'package:moviepilot_mobile/modules/plugin/models/installed_plugin_model_c
 import 'package:moviepilot_mobile/modules/plugin/models/plugin_backup_models.dart';
 import 'package:moviepilot_mobile/modules/plugin/models/plugin_model_cache.dart';
 import 'package:moviepilot_mobile/modules/plugin/models/plugin_models.dart';
+import 'package:moviepilot_mobile/modules/plugin/models/plugin_folder_models.dart';
+import 'package:moviepilot_mobile/modules/plugin/services/plugin_management_service.dart';
 import 'package:moviepilot_mobile/modules/plugin/services/plugin_backup_service.dart';
 import 'package:moviepilot_mobile/modules/plugin/services/plugin_palette_cache.dart';
 import 'package:moviepilot_mobile/modules/plugin/utils/plugin_repo_url_resolver.dart';
@@ -659,6 +661,58 @@ class PluginController extends GetxController {
     if (!_canAccessPlugins) return false;
     final response = await _apiClient.delete<dynamic>('/api/v1/plugin/$id');
     return response.statusCode == 200 && response.data['success'] == true;
+  }
+
+  late final _management = PluginManagementService(_apiClient);
+
+  String get managementScope => _management.scope;
+
+  void _requirePluginAccess() {
+    if (!_canAccessPlugins) {
+      throw const PluginManagementException('当前帐号无管理权限');
+    }
+  }
+
+  Future<PluginFolders> fetchFolders(String scope) {
+    _requirePluginAccess();
+    return _management.fetchFolders(scope);
+  }
+
+  Future<void> saveFolders({
+    required PluginFolders expected,
+    required PluginFolders updated,
+    required String scope,
+  }) {
+    _requirePluginAccess();
+    return _management.saveFolders(
+      expected: expected,
+      updated: updated,
+      expectedScope: scope,
+    );
+  }
+
+  Future<List<PluginRemote>> fetchRemotes(String scope) {
+    _requirePluginAccess();
+    return _management.fetchRemotes(scope);
+  }
+
+  Future<String> clonePlugin(String id, String suffix) async {
+    _requirePluginAccess();
+    final scope = managementScope;
+    try {
+      return await _management.clonePlugin(id, suffix);
+    } finally {
+      // The backend assigns folder membership itself. Refresh even on a
+      // partial registration failure; never guess the new instance ID.
+      if (!isClosed && managementScope == scope) await load(force: true);
+    }
+  }
+
+  Future<void> reloadPlugin(String id) async {
+    _requirePluginAccess();
+    final scope = managementScope;
+    await _management.reloadPlugin(id);
+    if (!isClosed && managementScope == scope) await load(force: true);
   }
 
   Future<({int ok, int fail})> uninstallUnavailablePlugins() async {

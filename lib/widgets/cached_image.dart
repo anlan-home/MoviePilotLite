@@ -7,10 +7,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:moviepilot_mobile/utils/image_cache_manager.dart';
 import 'package:moviepilot_mobile/utils/image_request_headers.dart';
+import 'package:moviepilot_mobile/utils/image_util.dart';
 
 /// 网络图片加载组件
 /// 基于 cached_network_image 和 flutter_cache_manager
-/// 统一处理缓存、请求头、尺寸解码与加载状态
+/// 统一处理缓存代理地址转换、缓存、请求头、尺寸解码与加载状态
 class CachedImage extends StatelessWidget {
   const CachedImage({
     super.key,
@@ -27,6 +28,7 @@ class CachedImage extends StatelessWidget {
     this.fadeInDuration = const Duration(milliseconds: 300),
     this.fadeOutDuration = const Duration(milliseconds: 100),
     this.cookie,
+    this.convertProxyUrl = true,
   });
 
   /// 图片 URL
@@ -68,6 +70,10 @@ class CachedImage extends StatelessWidget {
   /// Cookie
   final String? cookie;
 
+  /// 是否自动转换为缓存代理地址（默认开启）。
+  /// 传入已转换过的地址时会被自动识别并透传，不会二次包裹。
+  final bool convertProxyUrl;
+
   static const double _decodeOverscan = 1.35;
   static const int _minAutoCacheExtent = 64;
   static const int _maxAutoCacheExtent = 1600;
@@ -84,12 +90,13 @@ class CachedImage extends StatelessWidget {
     final autoCacheExtents = _autoCacheExtents(context, constraints);
     final effectiveMemCacheWidth = memCacheWidth ?? autoCacheExtents.width;
     final effectiveMemCacheHeight = memCacheHeight ?? autoCacheExtents.height;
+    final resolvedUrl = _resolveUrl();
     final headers = kIsWeb
         ? null
-        : buildImageRequestHeaders(imageUrl, cookie: cookie);
-    final cacheKey = kIsWeb ? null : _buildCacheKey(imageUrl);
+        : buildImageRequestHeaders(resolvedUrl, cookie: cookie);
+    final cacheKey = kIsWeb ? null : _buildCacheKey(resolvedUrl);
     final imageWidget = CachedNetworkImage(
-      imageUrl: imageUrl,
+      imageUrl: resolvedUrl,
       cacheKey: cacheKey,
       width: width,
       height: height,
@@ -176,6 +183,17 @@ class CachedImage extends StatelessWidget {
   /// 构建默认错误占位符
   Widget _buildDefaultErrorWidget(Object error) {
     return _ImageStateSurface(width: width, height: height, isError: true);
+  }
+
+  /// 解析最终加载地址：默认自动套用缓存代理。
+  /// 转换依赖 GetX 服务，未注册（如组件测试/极早期启动）时退回原始地址。
+  String _resolveUrl() {
+    if (kIsWeb || !convertProxyUrl || imageUrl.isEmpty) return imageUrl;
+    try {
+      return ImageUtil.convertCacheImageUrl(imageUrl);
+    } catch (_) {
+      return imageUrl;
+    }
   }
 
   String _buildCacheKey(String url) {

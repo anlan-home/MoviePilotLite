@@ -31,6 +31,10 @@ class Index extends StatefulWidget {
 class _IndexState extends State<Index> {
   final _appService = Get.find<AppService>();
   final _widgetNavigationService = Get.find<IosWidgetNavigationService>();
+  // Stable key so the tab body's element (and its page states/contexts) is
+  // reparented rather than torn down when the Scaffold body swaps between the
+  // floating bottom bar and the bare stack (e.g. when hiding the nav bar).
+  final _tabBodyKey = GlobalKey();
   late final List<ScrollController> _tabScrollControllers;
   int _selectedIndex = 0;
   bool _initialIndexApplied = false;
@@ -221,6 +225,7 @@ class _IndexState extends State<Index> {
   Widget _buildTabBody(int coercedIndex) {
     _activeScrollController = _tabScrollControllers[coercedIndex];
     return IndexedStack(
+      key: _tabBodyKey,
       index: coercedIndex,
       children: [
         DashboardPage(scrollController: _tabScrollControllers[0]),

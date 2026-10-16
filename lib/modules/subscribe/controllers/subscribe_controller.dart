@@ -10,12 +10,13 @@ import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_submit_resp
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/hive_service.dart';
+import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// 订阅类型：电视剧 / 电影
-enum SubscribeType { tv, movie }
+/// 订阅类型：电视剧 / 电影 / 音乐
+enum SubscribeType { tv, movie, music }
 
 enum SubscribeCollectionTab { following, washing }
 
@@ -60,8 +61,18 @@ extension SubscribeStateX on SubscribeState {
 }
 
 extension SubscribeTypeX on SubscribeType {
-  String get stype => this == SubscribeType.tv ? '电视剧' : '电影';
-  String get displayName => this == SubscribeType.tv ? '电视剧订阅' : '电影订阅';
+  String get stype =>
+      switch (this) {
+        SubscribeType.tv => '电视剧',
+        SubscribeType.movie => '电影',
+        SubscribeType.music => '音乐',
+      };
+  String get displayName =>
+      switch (this) {
+        SubscribeType.tv => '电视剧订阅',
+        SubscribeType.movie => '电影订阅',
+        SubscribeType.music => '音乐订阅',
+      };
 }
 
 class SubscribeController extends GetxController {
@@ -74,11 +85,15 @@ class SubscribeController extends GetxController {
   final _appService = Get.find<AppService>();
   final _log = Get.find<AppLog>();
   final _authRepository = Get.put(AuthRepository());
+  final _versionService = Get.find<ServerApiVersionService>();
   final subscribeService = Get.put(SubscribeService());
   var subscribeType = SubscribeType.tv;
 
   final userItems = <SubscribeItem>[].obs;
   final userLoading = false.obs;
+
+  /// 原始订阅记录（按订阅 id 索引），供音乐订阅等场景读取模型未覆盖的字段
+  final rawSubscribeById = <String, Map<String, dynamic>>{}.obs;
 
   final errorText = RxnString();
   final recommendationItems = <RecommendApiItem>[].obs;
@@ -175,8 +190,19 @@ class SubscribeController extends GetxController {
       if (token == null || token.isEmpty) {
         errorText.value = '请先登录';
         userItems.clear();
+        rawSubscribeById.clear();
         _clearRecommendations();
         return;
+      }
+      if (subscribeType == SubscribeType.music) {
+        final supported = await _versionService.isV3();
+        if (!supported) {
+          errorText.value = '音乐功能需要 MoviePilot v3 服务端';
+          userItems.clear();
+          rawSubscribeById.clear();
+          _clearRecommendations();
+          return;
+        }
       }
       final response = await _apiClient.get<dynamic>(
         '/api/v1/subscribe/',
@@ -186,11 +212,16 @@ class SubscribeController extends GetxController {
       if (status >= 400) {
         errorText.value = '请求失败 (HTTP $status)';
         userItems.clear();
+        rawSubscribeById.clear();
         _clearRecommendations();
         return;
       }
       _refreshUserCookie();
       final list = _extractList(response.data);
+      rawSubscribeById.assignAll({
+        for (final entry in list.whereType<Map<String, dynamic>>())
+          if (entry['id'] != null) '${entry['id']}': entry,
+      });
       final currentUsernames = await _currentUsernames();
       final parsed = list
           .whereType<Map<String, dynamic>>()
@@ -203,7 +234,10 @@ class SubscribeController extends GetxController {
           )
           .toList();
       userItems.assignAll(parsed);
-      if (parsed.length < _recommendationThreshold) {
+      if (subscribeType == SubscribeType.music) {
+        // 音乐暂无热门推荐数据源
+        _clearRecommendations();
+      } else if (parsed.length < _recommendationThreshold) {
         _loadRecommendationPreview();
       } else {
         _clearRecommendations();
@@ -212,6 +246,7 @@ class SubscribeController extends GetxController {
       _log.handle(e, stackTrace: st, message: '获取订阅列表失败');
       errorText.value = '请求失败，请稍后重试';
       userItems.clear();
+      rawSubscribeById.clear();
       _clearRecommendations();
     } finally {
       userLoading.value = false;
@@ -239,10 +274,14 @@ class SubscribeController extends GetxController {
 
   bool _matchesType(SubscribeItem item) {
     final t = item.type?.trim().toLowerCase() ?? '';
-    if (subscribeType == SubscribeType.tv) {
-      return t.contains('电视剧') || t.contains('tv') || t == 'tv';
+    switch (subscribeType) {
+      case SubscribeType.tv:
+        return t.contains('电视剧') || t.contains('tv') || t == 'tv';
+      case SubscribeType.movie:
+        return t.contains('电影') || t.contains('movie') || t == 'movie';
+      case SubscribeType.music:
+        return t.contains('音乐') || t == 'music';
     }
-    return t.contains('电影') || t.contains('movie') || t == 'movie';
   }
 
   bool _matchesCurrentUser(SubscribeItem item, Set<String> currentUsernames) {

@@ -5,6 +5,38 @@ import 'package:moviepilot_mobile/modules/agent/models/agent_models.dart';
 import 'package:moviepilot_mobile/modules/agent/widgets/agent_message_bubble.dart';
 
 void main() {
+  testWidgets(
+    'registered attachments use download callback, not external URL launch',
+    (tester) async {
+      final attachment = AgentAttachment.fromJson({
+        'url': 'message/agent/file/abc',
+        'name': 'private.png',
+        'kind': 'image',
+        'mime_type': 'image/png',
+      });
+      AgentAttachment? selected;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AgentMessageBubble(
+              message: AgentChatMessage(
+                id: 'file',
+                role: 'assistant',
+                content: '',
+                createdAt: DateTime(2026),
+                status: AgentMessageStatus.done,
+                attachments: [attachment],
+              ),
+              onAttachmentTap: (value) => selected = value,
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('private.png'));
+      expect(selected, same(attachment));
+    },
+  );
+
   testWidgets('renders markdown tables in assistant messages', (tester) async {
     final message = AgentChatMessage(
       id: 'assistant-1',

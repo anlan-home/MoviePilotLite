@@ -50,6 +50,8 @@ class MultifunctionPage extends GetView<MultifunctionController> {
         final hiddenRoutes = <String>{
           '/subscribe-movie',
           '/subscribe-tv',
+          '/subscribe-music',
+          '/music',
           '/site',
           '/downloader',
           '/subscribe-calendar',
@@ -89,6 +91,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                           pageWidth: pageWidth,
                           movieModule: modulesByRoute['/subscribe-movie'],
                           tvModule: modulesByRoute['/subscribe-tv'],
+                          musicModule: modulesByRoute['/subscribe-music'],
                         ),
                         const SizedBox(height: 24),
                         _buildReleasesSection(
@@ -97,6 +100,10 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                           items: calendarItems,
                           module: modulesByRoute['/subscribe-calendar'],
                         ),
+                        const SizedBox(height: 24),
+                      ],
+                      if (controller.musicLibrarySupported.value) ...[
+                        _buildMusicSection(module: modulesByRoute['/music']),
                         const SizedBox(height: 24),
                       ],
                       if (modulesByRoute['/site'] != null) ...[
@@ -142,13 +149,52 @@ class MultifunctionPage extends GetView<MultifunctionController> {
         statusBarBrightness: isDark ? Brightness.dark : Brightness.light,
       ),
       titleSpacing: 20,
-      title: Text(
-        '更多',
-        style: TextStyle(
-          fontSize: 24,
-          fontWeight: FontWeight.bold,
-          color: _textPrimary,
-        ),
+      title: Row(
+        children: [
+          Text(
+            '更多',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: _textPrimary,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Obx(() {
+            final online = controller.subscribeDataReady.value;
+            final statusColor = online
+                ? const Color(0xFF10B981)
+                : const Color(0xFFF59E0B);
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: statusColor.withValues(alpha: _isDark ? 0.16 : 0.1),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: statusColor,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    online ? '已连接' : '连接中',
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ],
       ),
       centerTitle: false,
       actions: [
@@ -231,10 +277,12 @@ class MultifunctionPage extends GetView<MultifunctionController> {
     required double pageWidth,
     DashboardModuleViewModel? movieModule,
     DashboardModuleViewModel? tvModule,
+    DashboardModuleViewModel? musicModule,
   }) {
     final info = controller.subscribeInfo.value;
     final moviePosters = _postersForRoute('/subscribe-movie');
     final tvPosters = _postersForRoute('/subscribe-tv');
+    final musicPosters = _postersForRoute('/subscribe-music');
     final useColumns = pageWidth >= 700;
 
     final movieCard = _subscriptionCategoryCard(
@@ -242,6 +290,8 @@ class MultifunctionPage extends GetView<MultifunctionController> {
       count: info.movieCount,
       accent: _primaryStrong,
       posters: moviePosters,
+      icon: Icons.movie_filter_rounded,
+      unit: '部',
       onTap: movieModule == null
           ? null
           : () => controller.handleRouteTap(
@@ -254,11 +304,27 @@ class MultifunctionPage extends GetView<MultifunctionController> {
       count: info.tvCount,
       accent: _secondaryStrong,
       posters: tvPosters,
+      icon: Icons.live_tv_rounded,
+      unit: '部',
       onTap: tvModule == null
           ? null
           : () => controller.handleRouteTap(
               tvModule.route,
               title: tvModule.title,
+            ),
+    );
+    final musicCard = _subscriptionCategoryCard(
+      title: '音乐订阅',
+      count: info.musicCount,
+      accent: const Color(0xFF8B5CF6),
+      posters: musicPosters,
+      icon: Icons.library_music_rounded,
+      unit: '张',
+      onTap: musicModule == null
+          ? null
+          : () => controller.handleRouteTap(
+              musicModule.route,
+              title: musicModule.title,
             ),
     );
 
@@ -269,6 +335,12 @@ class MultifunctionPage extends GetView<MultifunctionController> {
           title: '订阅',
           icon: CupertinoIcons.star_fill,
           accent: _primary,
+          trailing: controller.subscribeDataReady.value
+              ? '共 ${info.movieCount + info.tvCount + info.musicCount} 个'
+              : null,
+          onTap: controller.subscribeDataReady.value
+              ? () => Get.toNamed('/subscribe-calendar')
+              : null,
           trailingWidget: !controller.subscribeDataReady.value
               ? Row(
                   mainAxisSize: MainAxisSize.min,
@@ -298,10 +370,20 @@ class MultifunctionPage extends GetView<MultifunctionController> {
               Expanded(child: movieCard),
               const SizedBox(width: 12),
               Expanded(child: tvCard),
+              const SizedBox(width: 12),
+              Expanded(child: musicCard),
             ],
           )
         else
-          Column(children: [movieCard, const SizedBox(height: 12), tvCard]),
+          Column(
+            children: [
+              movieCard,
+              const SizedBox(height: 12),
+              tvCard,
+              const SizedBox(height: 12),
+              musicCard,
+            ],
+          ),
       ],
     );
   }
@@ -311,11 +393,17 @@ class MultifunctionPage extends GetView<MultifunctionController> {
     required int count,
     required Color accent,
     required List<String> posters,
+    required IconData icon,
+    required String unit,
     VoidCallback? onTap,
   }) {
+    final backdrop = posters.isNotEmpty ? posters.first.trim() : '';
+    final fanPosters = posters.length > 1
+        ? posters.sublist(1, posters.length.clamp(2, 4)).toList()
+        : <String>[];
     return Semantics(
       button: onTap != null,
-      label: '$title，共 $count 部',
+      label: '$title，共 $count $unit',
       child: AppGlassCard(
         onTap: onTap,
         padding: EdgeInsets.zero,
@@ -323,157 +411,366 @@ class MultifunctionPage extends GetView<MultifunctionController> {
         accentColor: accent,
         child: SizedBox(
           height: 132,
-          child: Row(
-            children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.horizontal(
-                  left: Radius.circular(23),
-                ),
-                child: SizedBox(
-                  width: 108,
-                  height: double.infinity,
-                  child: _buildSubscriptionPosterCollage(
-                    title: title,
-                    accent: accent,
-                    posters: posters,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(23),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (backdrop.isNotEmpty)
+                  CachedImage(imageUrl: backdrop, fit: BoxFit.cover)
+                else
+                  _buildSubscriptionPlaceholder(accent: accent, icon: icon),
+                Positioned.fill(child: _buildCardScrim()),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.black.withValues(alpha: 0.32),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.14),
+                      ),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_forward_rounded,
+                      size: 15,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 12, 16),
+                if (fanPosters.isNotEmpty)
+                  Positioned(
+                    right: 14,
+                    bottom: 14,
+                    child: _buildMiniPosterFan(fanPosters),
+                  ),
+                Positioned(
+                  left: 16,
+                  right: fanPosters.isNotEmpty ? 118 : 16,
+                  bottom: 14,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Text(
                         title,
-                        style: TextStyle(
-                          color: _textPrimary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
                           fontSize: 16,
-                          fontWeight: FontWeight.w600,
+                          fontWeight: FontWeight.w700,
                           letterSpacing: -0.3,
+                          shadows: [
+                            Shadow(
+                              color: Colors.black54,
+                              blurRadius: 8,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '$count 部',
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 26,
-                          height: 1,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.8,
-                        ),
-                      ),
-                      const Spacer(),
+                      const SizedBox(height: 5),
                       Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           Text(
-                            '查看订阅',
-                            style: TextStyle(
-                              color: _textMuted,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
+                            '$count',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 24,
+                              height: 1,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: -0.6,
+                              shadows: [
+                                Shadow(
+                                  color: Colors.black45,
+                                  blurRadius: 8,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
                             ),
                           ),
-                          const Spacer(),
-                          Icon(
-                            Icons.arrow_forward_rounded,
-                            size: 17,
-                            color: accent,
+                          const SizedBox(width: 4),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text(
+                              unit,
+                              style: TextStyle(
+                                color: Colors.white.withValues(alpha: 0.72),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
                           ),
                         ],
                       ),
                     ],
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSubscriptionPosterCollage({
-    required String title,
-    required Color accent,
-    required List<String> posters,
-  }) {
-    if (posters.isEmpty) {
-      return ColoredBox(
-        color: _surfaceHighest.withValues(alpha: _isDark ? 0.58 : 0.46),
-        child: Icon(
-          title.startsWith('电影')
-              ? Icons.movie_filter_rounded
-              : Icons.live_tv_rounded,
-          color: accent,
-          size: 30,
+  /// 底部渐变遮罩：压暗封面以承载白色文字
+  Widget _buildCardScrim() {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.08),
+            Colors.black.withValues(alpha: 0.16),
+            Colors.black.withValues(alpha: 0.68),
+          ],
+          stops: const [0, 0.42, 1],
+        ),
+      ),
+    );
+  }
+
+  /// 次要封面扇形堆叠（最多两张）
+  Widget _buildMiniPosterFan(List<String> posters) {
+    const angles = [-0.16, 0.16];
+    final children = <Widget>[];
+    for (var i = 0; i < posters.length; i++) {
+      children.add(
+        Positioned(
+          left: i * 22.0,
+          child: Transform.rotate(
+            angle: angles[i % 2],
+            child: Container(
+              width: 44,
+              height: 66,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _isDark
+                      ? Colors.white.withValues(alpha: 0.2)
+                      : Colors.white.withValues(alpha: 0.9),
+                  width: 1.1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: CachedImage(imageUrl: posters[i], fit: BoxFit.cover),
+            ),
+          ),
         ),
       );
     }
+    return SizedBox(
+      width: 44 + (posters.length > 1 ? 22.0 : 0),
+      height: 72,
+      child: Stack(children: children.reversed.toList()),
+    );
+  }
 
-    final visiblePosters = posters.take(3).toList();
-    final leftOffsets = switch (visiblePosters.length) {
-      1 => const [19.0],
-      2 => const [10.0, 30.0],
-      _ => const [5.0, 21.0, 37.0],
-    };
-    final topOffsets = switch (visiblePosters.length) {
-      1 => const [13.0],
-      2 => const [17.0, 11.0],
-      _ => const [20.0, 15.0, 10.0],
-    };
-
+  /// 无封面时的占位背景：品类主色渐变 + 扇形铺排的图标封面
+  Widget _buildSubscriptionPlaceholder({
+    required Color accent,
+    required IconData icon,
+  }) {
+    final placeholders = [
+      (angle: -0.21, left: 6.0, top: 22.0),
+      (angle: 0.0, left: 26.0, top: 16.0),
+      (angle: 0.21, left: 46.0, top: 22.0),
+    ];
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: _isDark ? 0.08 : 0.055),
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            accent.withValues(alpha: _isDark ? 0.16 : 0.11),
-            _surfaceHighest.withValues(alpha: _isDark ? 0.54 : 0.70),
+            accent.withValues(alpha: _isDark ? 0.4 : 0.32),
+            _surfaceHighest.withValues(alpha: _isDark ? 0.86 : 0.92),
           ],
         ),
       ),
       child: Stack(
         children: [
-          for (var index = 0; index < visiblePosters.length; index++)
+          for (final tile in placeholders)
             Positioned(
-              left: leftOffsets[index],
-              top: topOffsets[index],
-              child: Container(
-                width: 66,
-                height: 102,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(9),
-                  border: Border.all(
-                    color: _isDark
-                        ? Colors.white.withValues(alpha: 0.18)
-                        : Colors.white.withValues(alpha: 0.92),
-                    width: 1.2,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(
-                        alpha: _isDark ? 0.26 : 0.14,
-                      ),
-                      blurRadius: 10,
-                      offset: const Offset(0, 4),
+              left: tile.left,
+              top: tile.top,
+              child: Transform.rotate(
+                angle: tile.angle,
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    color: _surfaceHighest.withValues(
+                      alpha: _isDark ? 0.82 : 0.92,
                     ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: CachedImage(
-                  imageUrl: visiblePosters[index],
-                  fit: BoxFit.cover,
+                    border: Border.all(
+                      color: _isDark
+                          ? Colors.white.withValues(alpha: 0.14)
+                          : Colors.white.withValues(alpha: 0.9),
+                      width: 1.1,
+                    ),
+                  ),
+                  child: Icon(
+                    icon,
+                    size: 22,
+                    color: accent.withValues(alpha: _isDark ? 0.9 : 0.78),
+                  ),
                 ),
               ),
             ),
         ],
       ),
+    );
+  }
+
+  /// 音乐库专属入口：v3 旗舰新特性，紫色 Hero 卡突出展示
+  Widget _buildMusicSection({DashboardModuleViewModel? module}) {
+    final route = module?.route ?? '/music';
+    final title = module?.title ?? '音乐库';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _sectionHeader(
+          title: '音乐',
+          icon: Icons.library_music_rounded,
+          accent: const Color(0xFF8B5CF6),
+          trailing: 'v3 新特性',
+        ),
+        const SizedBox(height: 8),
+        Semantics(
+          button: true,
+          label: '音乐库，专辑与音乐人浏览',
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: () =>
+                  controller.handleRouteTap(route, title: module?.title),
+              child: Container(
+                height: 92,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: _isDark
+                        ? [
+                            const Color(0xFF8B5CF6).withValues(alpha: 0.6),
+                            const Color(0xFF4C1D95).withValues(alpha: 0.85),
+                          ]
+                        : [
+                            const Color(0xFFA78BFA).withValues(alpha: 0.88),
+                            const Color(0xFF6D28D9).withValues(alpha: 0.94),
+                          ],
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned(
+                      right: -12,
+                      bottom: -22,
+                      child: Icon(
+                        Icons.library_music_rounded,
+                        size: 116,
+                        color: Colors.white.withValues(alpha: 0.13),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      title,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 17,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: -0.3,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 8,
+                                        vertical: 3,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.2,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          999,
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        'v3 新特性',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 10.5,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 5),
+                                Text(
+                                  '专辑 · 艺术家 · 音轨浏览与媒体库播放',
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(
+                                      alpha: 0.78,
+                                    ),
+                                    fontSize: 12,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Container(
+                            width: 30,
+                            height: 30,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: Colors.white.withValues(alpha: 0.18),
+                            ),
+                            child: const Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 16,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -499,6 +796,14 @@ class MultifunctionPage extends GetView<MultifunctionController> {
             },
           ),
         ),
+        if (controller.isCalendarMockEnabled)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              '测试数据 · 仅“更多”页 · 今天 2 集 / 本周 4 集',
+              style: TextStyle(color: _secondary, fontSize: 13),
+            ),
+          ),
         const SizedBox(height: 8),
         SizedBox(
           key: ValueKey('release-$segment'),
@@ -532,6 +837,14 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                   itemCount: items.length,
                 ),
         ),
+        if (items.isNotEmpty && controller.calendarError.value != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              controller.calendarError.value!,
+              style: TextStyle(color: _textSecondary, fontSize: 13),
+            ),
+          ),
       ],
     );
   }
@@ -705,7 +1018,10 @@ class MultifunctionPage extends GetView<MultifunctionController> {
       child: _glassCard(
         child: Center(
           child: Text(
-            '暂无上映日历数据',
+            controller.calendarError.value ??
+                (controller.isLoadingDashboard.value
+                    ? '上映日历加载中…'
+                    : '暂无上映日历数据'),
             style: TextStyle(
               color: _textSecondary,
               fontSize: 15,
@@ -719,6 +1035,9 @@ class MultifunctionPage extends GetView<MultifunctionController> {
 
   Widget _buildSitesSection(DashboardModuleViewModel module) {
     final info = controller.siteInfo.value;
+    final shareRate = info.totalDownload > 0
+        ? (info.totalUpload / info.totalDownload).toStringAsFixed(2)
+        : '—';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -727,6 +1046,9 @@ class MultifunctionPage extends GetView<MultifunctionController> {
           title: '站点',
           icon: CupertinoIcons.globe,
           accent: _primary,
+          trailing: controller.siteDataReady.value
+              ? '${info.siteCount} 个站点在线'
+              : null,
           onTap: () =>
               controller.handleRouteTap(module.route, title: module.title),
         ),
@@ -752,7 +1074,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                 title: '累计上传',
                 subtitle: '站点用户数据汇总流量',
                 value: _shortSize(info.totalUpload),
-                valueColor: _primary,
+                valueColor: _secondary,
                 showDivider: true,
               ),
               _siteRow(
@@ -761,7 +1083,16 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                 title: '累计下载',
                 subtitle: '站点用户数据汇总流量',
                 value: _shortSize(info.totalDownload),
-                valueColor: _secondary,
+                valueColor: _palette.successAccent,
+                showDivider: true,
+              ),
+              _siteRow(
+                icon: Icons.balance_rounded,
+                iconColor: _palette.warmAccent,
+                title: '平均分享率',
+                subtitle: '上传与下载流量比值',
+                value: shareRate,
+                valueColor: _palette.warmAccent,
               ),
             ],
           ),
@@ -785,17 +1116,17 @@ class MultifunctionPage extends GetView<MultifunctionController> {
             ? Border(bottom: BorderSide(color: _outlineSoft, width: 0.5))
             : null,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       child: Row(
         children: [
           Container(
-            width: 32,
-            height: 32,
+            width: 38,
+            height: 38,
             decoration: BoxDecoration(
-              color: iconColor.withValues(alpha: 0.10),
-              borderRadius: BorderRadius.circular(16),
+              color: iconColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(12),
             ),
-            child: Icon(icon, size: 18, color: iconColor),
+            child: Icon(icon, size: 19, color: iconColor),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -806,46 +1137,33 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                   title,
                   style: TextStyle(
                     color: _textPrimary,
-                    fontSize: 17,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    letterSpacing: -0.4,
+                    letterSpacing: -0.2,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
                 Text(
                   subtitle,
                   style: TextStyle(
-                    color: iconColor == _error ? _error : _textSecondary,
+                    color: iconColor == _error ? _error : _textMuted,
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
+                    height: 1.3,
                   ),
                 ),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                value,
-                style: TextStyle(
-                  color: valueColor,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.2,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Container(
-                width: 28,
-                height: 2,
-                decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: 0.55),
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-            ],
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              letterSpacing: -0.2,
+            ),
           ),
         ],
       ),
@@ -883,6 +1201,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                       value: _metricNumber(info.totalDownloadSpeed),
                       unit: _metricUnit(info.totalDownloadSpeed),
                       accent: _primary,
+                      active: info.totalDownloadSpeed > 0,
                     ),
                   ),
                   SizedBox(width: isCompact ? 8 : 12),
@@ -893,6 +1212,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                       value: _metricNumber(info.totalUploadSpeed),
                       unit: _metricUnit(info.totalUploadSpeed),
                       accent: _secondary,
+                      active: info.totalUploadSpeed > 0,
                     ),
                   ),
                 ],
@@ -1045,33 +1365,50 @@ class MultifunctionPage extends GetView<MultifunctionController> {
     required String value,
     required String unit,
     required Color accent,
+    bool active = false,
   }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: _surfaceHighest.withValues(alpha: _isDark ? 0.34 : 0.72),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _outlineSoft),
+        color: accent.withValues(alpha: _isDark ? 0.10 : 0.06),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(icon, size: 14, color: _textSecondary),
+              Icon(icon, size: 14, color: accent),
               const SizedBox(width: 6),
               Text(
                 label,
                 style: TextStyle(
                   color: _textMuted,
                   fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  letterSpacing: 0.6,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
+                ),
+              ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (active ? const Color(0xFF10B981) : _textMuted)
+                      .withValues(alpha: _isDark ? 0.16 : 0.1),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  active ? 'Active' : '空闲',
+                  style: TextStyle(
+                    color: active ? const Color(0xFF10B981) : _textMuted,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Wrap(
             crossAxisAlignment: WrapCrossAlignment.end,
             spacing: 4,
@@ -1081,8 +1418,8 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                 style: TextStyle(
                   color: _textPrimary,
                   fontSize: 20,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: -0.2,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.3,
                 ),
               ),
               Padding(
@@ -1090,22 +1427,13 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                 child: Text(
                   unit,
                   style: TextStyle(
-                    color: _textSecondary,
+                    color: _textMuted,
                     fontSize: 12,
                     fontWeight: FontWeight.w400,
                   ),
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 2),
-          Container(
-            width: 22,
-            height: 2,
-            decoration: BoxDecoration(
-              color: accent.withValues(alpha: 0.65),
-              borderRadius: BorderRadius.circular(999),
-            ),
           ),
         ],
       ),
@@ -1132,7 +1460,9 @@ class MultifunctionPage extends GetView<MultifunctionController> {
           title: '插件中心',
           icon: CupertinoIcons.square_grid_2x2_fill,
           accent: _palette.warmAccent,
-          trailing: pluginMeta.isEmpty ? null : pluginMeta,
+          trailing: items.isEmpty
+              ? (pluginMeta.isEmpty ? null : pluginMeta)
+              : '已启用 ${items.length} 个',
           onTap: () => controller.handleRouteTap('/plugin', title: '插件'),
         ),
         if (items.isNotEmpty) ...[
@@ -1298,6 +1628,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
   }) {
     final title = _utilityTitle(module.title);
     final meta = module.primaryText.trim();
+    final subtitle = module.secondaryText.trim();
 
     return Semantics(
       button: true,
@@ -1308,7 +1639,7 @@ class MultifunctionPage extends GetView<MultifunctionController> {
           onTap: () =>
               controller.handleRouteTap(module.route, title: module.title),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(minHeight: 56),
+            constraints: const BoxConstraints(minHeight: 60),
             child: Container(
               decoration: BoxDecoration(
                 border: showDivider
@@ -1317,36 +1648,58 @@ class MultifunctionPage extends GetView<MultifunctionController> {
                       )
                     : null,
               ),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.fromLTRB(16, 11, 14, 11),
               child: Row(
                 children: [
                   Container(
-                    width: 36,
-                    height: 36,
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
-                      color: module.accent.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(10),
+                      color: module.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Icon(module.icon, size: 18, color: module.accent),
+                    child: Icon(module.icon, size: 19, color: module.accent),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
-                    child: Text(
-                      title,
-                      style: TextStyle(
-                        color: _textPrimary,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: -0.2,
-                      ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _textPrimary,
+                            fontSize: 15,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: -0.2,
+                          ),
+                        ),
+                        if (subtitle.isNotEmpty)
+                          ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: _textMuted,
+                                fontSize: 12,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                      ],
                     ),
                   ),
                   if (meta.isNotEmpty) ...[
+                    const SizedBox(width: 8),
                     Text(
                       meta,
                       style: TextStyle(
                         color: _textMuted,
-                        fontSize: 13,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w500,
                       ),
                     ),

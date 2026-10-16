@@ -14,9 +14,11 @@ private enum SharedSessionConfig {
 private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: "app_widget_route")
 
 @main
-@objc class AppDelegate: FlutterAppDelegate {
+@objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let widgetRouteChannelName = "org.moviepilot/widget_navigation"
   private var pendingWidgetRoute: String?
+  private var widgetRouteChannel: FlutterMethodChannel?
+  private let sceneLifecycle = MoviePilotSceneLifecycle()
 
   override func application(
     _ application: UIApplication,
@@ -30,78 +32,83 @@ private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: 
     {
       pendingWidgetRoute = appRoute(fromNotificationUserInfo: userInfo)
     }
-    GeneratedPluginRegistrant.register(with: self)
-    if let controller = window?.rootViewController as? FlutterViewController {
-      let appIconChannel = FlutterMethodChannel(
-        name: "org.moviepilot/app_icon",
-        binaryMessenger: controller.binaryMessenger
-      )
-      appIconChannel.setMethodCallHandler { call, result in
-        guard call.method == "setAppIcon",
+    self.registrar(forPlugin: "MoviePilotSceneLifecycle")?.addSceneDelegate(sceneLifecycle)
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    let messenger = engineBridge.applicationRegistrar.messenger()
+
+    let appIconChannel = FlutterMethodChannel(
+      name: "org.moviepilot/app_icon",
+      binaryMessenger: messenger
+    )
+    appIconChannel.setMethodCallHandler { call, result in
+      guard call.method == "setAppIcon",
+        let arguments = call.arguments as? [String: Any],
+        let iconId = arguments["iconId"] as? String
+      else {
+        result(false)
+        return
+      }
+      self.setAlternateAppIcon(iconId: iconId, result: result)
+    }
+
+    let channel = FlutterMethodChannel(
+      name: "org.moviepilot/ios_shared_session",
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "saveSharedSession":
+        guard
           let arguments = call.arguments as? [String: Any],
-          let iconId = arguments["iconId"] as? String
+          let server = arguments["server"] as? String,
+          let accessToken = arguments["accessToken"] as? String
         else {
-          result(false)
+          result(
+            FlutterError(code: "bad_args", message: "Missing session arguments", details: nil))
           return
         }
-        self.setAlternateAppIcon(iconId: iconId, result: result)
-      }
-
-      let channel = FlutterMethodChannel(
-        name: "org.moviepilot/ios_shared_session",
-        binaryMessenger: controller.binaryMessenger
-      )
-      channel.setMethodCallHandler { call, result in
-        switch call.method {
-        case "saveSharedSession":
-          guard
-            let arguments = call.arguments as? [String: Any],
-            let server = arguments["server"] as? String,
-            let accessToken = arguments["accessToken"] as? String
-          else {
-            result(
-              FlutterError(code: "bad_args", message: "Missing session arguments", details: nil))
-            return
-          }
-          self.saveSharedSession(server: server, accessToken: accessToken)
-          result(nil)
-        case "clearSharedSession":
-          self.clearSharedSession()
-          result(nil)
-        case "saveSiteWidgetPayload":
-          guard
-            let arguments = call.arguments as? [String: Any],
-            let payload = arguments["payload"] as? String
-          else {
-            result(
-              FlutterError(code: "bad_args", message: "Missing site widget payload", details: nil))
-            return
-          }
-          self.saveSiteWidgetPayload(payload)
-          result(nil)
-        case "reloadWidgets":
-          WidgetCenter.shared.reloadAllTimelines()
-          result(nil)
-        default:
-          result(FlutterMethodNotImplemented)
+        self.saveSharedSession(server: server, accessToken: accessToken)
+        result(nil)
+      case "clearSharedSession":
+        self.clearSharedSession()
+        result(nil)
+      case "saveSiteWidgetPayload":
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let payload = arguments["payload"] as? String
+        else {
+          result(
+            FlutterError(code: "bad_args", message: "Missing site widget payload", details: nil))
+          return
         }
-      }
-
-      let widgetRouteChannel = FlutterMethodChannel(
-        name: widgetRouteChannelName,
-        binaryMessenger: controller.binaryMessenger
-      )
-      widgetRouteChannel.setMethodCallHandler { call, result in
-        switch call.method {
-        case "getPendingWidgetRoute":
-          result(self.pendingWidgetRoute)
-          self.pendingWidgetRoute = nil
-        default:
-          result(FlutterMethodNotImplemented)
-        }
+        self.saveSiteWidgetPayload(payload)
+        result(nil)
+      case "reloadWidgets":
+        WidgetCenter.shared.reloadAllTimelines()
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
       }
     }
-    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+
+    let widgetRouteChannel = FlutterMethodChannel(
+      name: widgetRouteChannelName,
+      binaryMessenger: messenger
+    )
+    widgetRouteChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "getPendingWidgetRoute":
+        result(self.pendingWidgetRoute)
+        self.pendingWidgetRoute = nil
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    self.widgetRouteChannel = widgetRouteChannel
   }
 
   private func setAlternateAppIcon(iconId: String, result: @escaping FlutterResult) {
@@ -210,7 +217,7 @@ private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: 
     WidgetCenter.shared.reloadAllTimelines()
   }
 
-  private func handleWidgetRoute(_ url: URL) {
+  fileprivate func handleWidgetRoute(_ url: URL) {
     appWidgetLog.info("received widget url=\(url.absoluteString, privacy: .public)")
     guard let route = widgetRoute(from: url) else { return }
     openAppRoute(route)
@@ -225,12 +232,7 @@ private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: 
   private func openAppRoute(_ route: String) {
     appWidgetLog.info("resolved app route=\(route, privacy: .public)")
     pendingWidgetRoute = route
-    guard let controller = window?.rootViewController as? FlutterViewController else { return }
-    let channel = FlutterMethodChannel(
-      name: widgetRouteChannelName,
-      binaryMessenger: controller.binaryMessenger
-    )
-    channel.invokeMethod("openWidgetRoute", arguments: route)
+    widgetRouteChannel?.invokeMethod("openWidgetRoute", arguments: route)
   }
 
   private func appRoute(fromNotificationUserInfo userInfo: [AnyHashable: Any]) -> String? {
@@ -360,5 +362,23 @@ private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: 
       return "moviepilot://system-message"
     }
     return nil
+  }
+}
+
+private class MoviePilotSceneLifecycle: NSObject, FlutterSceneLifeCycleDelegate {
+  func scene(
+    _ scene: UIScene,
+    willConnectTo session: UISceneSession,
+    options connectionOptions: UIScene.ConnectionOptions?
+  ) -> Bool {
+    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return false }
+    connectionOptions?.urlContexts.forEach { appDelegate.handleWidgetRoute($0.url) }
+    return false
+  }
+
+  func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) -> Bool {
+    guard let appDelegate = UIApplication.shared.delegate as? AppDelegate else { return false }
+    URLContexts.forEach { appDelegate.handleWidgetRoute($0.url) }
+    return false
   }
 }

@@ -35,6 +35,28 @@ class AgentController extends GetxController {
   final isLoadingSessions = false.obs;
   final isLoadingMessages = false.obs;
   final isSending = false.obs;
+  final isStopping = false.obs;
+  final isUploading = false.obs;
+  final pendingAttachments = <AgentAttachment>[].obs;
+  int _streamGeneration = 0;
+  int _conversationGeneration = 0;
+  bool _disposed = false;
+  String? _outboundSessionId;
+
+  bool get supportsAttachments => _repository is AgentRepositoryActions;
+  bool get canSend =>
+      !_disposed &&
+      !isSending.value &&
+      !isStopping.value &&
+      !isUploading.value &&
+      !isLoadingMessages.value;
+
+  void _clearAttachmentDraft() {
+    _conversationGeneration++;
+    pendingAttachments.clear();
+    isUploading.value = false;
+  }
+
   final sessionError = RxnString();
   final messageError = RxnString();
   final activeClientSessionId = RxnString();
@@ -69,6 +91,7 @@ class AgentController extends GetxController {
   }
 
   Future<void> _handleCacheScopeChanged(String scopeKey) async {
+    _clearAttachmentDraft();
     await _cancelStream(markFailed: false);
     _persistDebounce?.cancel();
     _persistDebounce = null;
@@ -108,15 +131,20 @@ class AgentController extends GetxController {
 
   @override
   void onClose() {
+    _disposed = true;
+    ++_streamGeneration;
+    _clearAttachmentDraft();
     _scopeWorker?.dispose();
     _persistDebounce?.cancel();
     _clearStreamTimeouts();
     _flushActiveMessagesToDisk();
-    _streamSubscription?.cancel();
+    unawaited(_cancelSubscription(_streamSubscription));
+    _streamSubscription = null;
     super.onClose();
   }
 
   Future<void> clearForLogout() async {
+    _clearAttachmentDraft();
     await _cancelStream(markFailed: false);
     _persistDebounce?.cancel();
     _persistDebounce = null;
@@ -179,49 +207,40 @@ class AgentController extends GetxController {
   }
 
   Future<void> loadSession(AgentSession session) async {
-    await _cancelStream(markFailed: false);
-    _flushActiveMessagesToDisk();
-
-    final loadingSessionId = session.sessionId;
-    activeClientSessionId.value = session.clientSessionId;
-    activeServerSessionId.value = loadingSessionId;
-    messageError.value = null;
-
-    final cached = await _resolveCachedMessages(loadingSessionId);
-    if (cached.isNotEmpty) {
-      messages.assignAll(cached);
-    } else {
-      messages.clear();
-    }
-
+    _clearAttachmentDraft();
+    final generation = _conversationGeneration;
+    bool isCurrent() => !_disposed && generation == _conversationGeneration;
     isLoadingMessages.value = true;
     try {
+      await _cancelStream(markFailed: false);
+      if (!isCurrent()) return;
+      _flushActiveMessagesToDisk();
+
+      final loadingSessionId = session.sessionId;
+      activeClientSessionId.value = session.clientSessionId;
+      activeServerSessionId.value = loadingSessionId;
+      messageError.value = null;
+
+      final cached = await _resolveCachedMessages(loadingSessionId);
+      if (!isCurrent()) return;
+      messages.assignAll(cached);
+
       final history = await _repository.fetchSessionMessages(loadingSessionId);
-      if (activeServerSessionId.value != loadingSessionId || isSending.value) {
-        return;
-      }
-      if (history.isEmpty) {
-        if (messages.isEmpty) {
-          final fallback = await _resolveCachedMessages(loadingSessionId);
-          if (fallback.isNotEmpty) {
-            messages.assignAll(fallback);
-          }
-        }
-        return;
-      }
+      if (!isCurrent() || isSending.value) return;
+      if (history.isEmpty) return;
       final merged = _mergeSessionMessages(
-        messages.isNotEmpty
-            ? List<AgentChatMessage>.from(messages)
-            : await _resolveCachedMessages(loadingSessionId),
+        List<AgentChatMessage>.from(messages),
         history,
       );
       messages.assignAll(merged);
       _rememberMessages(loadingSessionId, merged, immediate: true);
       unawaited(_persistLastSession(session));
     } catch (e, st) {
+      if (!isCurrent()) return;
       _log.handle(e, stackTrace: st, message: '加载 Agent 历史消息失败');
       if (messages.isEmpty) {
-        final fallback = await _resolveCachedMessages(loadingSessionId);
+        final fallback = await _resolveCachedMessages(session.sessionId);
+        if (!isCurrent()) return;
         if (fallback.isNotEmpty) {
           messages.assignAll(fallback);
         } else {
@@ -229,14 +248,16 @@ class AgentController extends GetxController {
         }
       }
     } finally {
-      if (activeServerSessionId.value == loadingSessionId) {
+      if (isCurrent()) {
         isLoadingMessages.value = false;
       }
     }
   }
 
   Future<void> startNewSession() async {
+    _clearAttachmentDraft();
     await _cancelStream(markFailed: false);
+    isLoadingMessages.value = false;
     _flushActiveMessagesToDisk();
     activeClientSessionId.value = null;
     activeServerSessionId.value = null;
@@ -246,8 +267,12 @@ class AgentController extends GetxController {
 
   Future<void> sendMessage(String text) async {
     final trimmed = text.trim();
-    if (trimmed.isEmpty || isSending.value || isLoadingMessages.value) return;
-    await _cancelStream(markFailed: false);
+    if (!canSend || (trimmed.isEmpty && pendingAttachments.isEmpty)) return;
+    final attachments = List<AgentAttachment>.unmodifiable(pendingAttachments);
+    if (attachments.isNotEmpty && !supportsAttachments) return;
+    // Reserve the send before awaiting so two taps cannot create two streams.
+    isSending.value = true;
+    final generation = ++_streamGeneration;
     messageError.value = null;
     final serverSessionId = activeServerSessionId.value;
     if (activeClientSessionId.value == null ||
@@ -257,12 +282,14 @@ class AgentController extends GetxController {
     final outboundSessionId = serverSessionId == null || serverSessionId.isEmpty
         ? activeClientSessionId.value!
         : serverSessionId;
+    _outboundSessionId = outboundSessionId;
 
     final now = DateTime.now();
     final userMessage = AgentChatMessage(
       id: _messageId('user'),
       role: 'user',
       content: trimmed,
+      attachments: attachments,
       createdAt: now,
       status: AgentMessageStatus.done,
     );
@@ -276,7 +303,8 @@ class AgentController extends GetxController {
     _activeAssistantMessageId = assistantMessage.id;
     messages.addAll([userMessage, assistantMessage]);
     _persistActiveMessages();
-    isSending.value = true;
+    pendingAttachments.clear();
+    _armStreamTimeouts();
 
     try {
       debugPrint(
@@ -287,37 +315,49 @@ class AgentController extends GetxController {
         'Agent SSE 订阅 outboundSessionId=$outboundSessionId '
         'clientSessionId=${activeClientSessionId.value}',
       );
-      final stream = await _repository.sendMessage(
-        text: trimmed,
-        sessionId: outboundSessionId,
-        clientSessionId: activeClientSessionId.value,
-      );
+      final stream = attachments.isEmpty
+          ? await _repository.sendMessage(
+              text: trimmed,
+              sessionId: outboundSessionId,
+              clientSessionId: activeClientSessionId.value,
+            )
+          : await (_repository as AgentRepositoryActions)
+                .sendMessageWithAttachments(
+                  text: trimmed,
+                  sessionId: outboundSessionId,
+                  clientSessionId: activeClientSessionId.value,
+                  attachments: attachments,
+                );
+      if (_disposed || generation != _streamGeneration) {
+        // The HTTP handshake can finish after stop, navigation, or logout.
+        await stream.listen((_) {}).cancel();
+        return;
+      }
       _streamSubscription = stream.listen(
         (event) {
+          if (_disposed || generation != _streamGeneration) return;
           _touchStreamIdleTimeout();
           applyStreamEvent(event);
         },
         onError: (error, stackTrace) {
+          if (_disposed || generation != _streamGeneration) return;
           _log.handle(error, stackTrace: stackTrace, message: 'Agent SSE 失败');
           unawaited(
             _abortActiveStream(failed: true, errorMessage: '消息发送失败，请稍后重试'),
           );
         },
         onDone: () {
-          debugPrint('[Agent SSE] 订阅结束');
-          _log.info('Agent SSE 订阅结束');
-          _clearStreamTimeouts();
-          if (isSending.value) {
-            _finishStreaming();
-          }
-          unawaited(_syncAfterStreamDone());
+          if (_disposed || generation != _streamGeneration) return;
+          unawaited(_abortActiveStream(failed: false));
         },
         cancelOnError: false,
       );
-      _armStreamTimeouts();
     } catch (e, st) {
+      if (_disposed || generation != _streamGeneration) return;
       _log.handle(e, stackTrace: st, message: 'Agent 消息发送失败');
+      ++_streamGeneration;
       _finishStreaming(failed: true);
+      pendingAttachments.assignAll(attachments);
       messageError.value = '消息发送失败，请稍后重试';
       ToastUtil.error(messageError.value!);
     }
@@ -338,6 +378,22 @@ class AgentController extends GetxController {
           _persistActiveMessages(immediate: true);
           unawaited(_persistActiveSession());
           _upsertActiveSessionSummary();
+        }
+        break;
+      case 'attachment':
+        final raw = event.raw['attachment'];
+        final index = _assistantIndex();
+        if (raw is Map && index != -1) {
+          final attachment = AgentAttachment.fromJson(
+            Map<String, dynamic>.from(raw),
+          );
+          if (attachment.hasDisplayValue) {
+            final current = messages[index];
+            messages[index] = current.copyWith(
+              attachments: [...current.attachments, attachment],
+            );
+            _persistActiveMessages();
+          }
         }
         break;
       case 'tool':
@@ -370,15 +426,21 @@ class AgentController extends GetxController {
   }
 
   Future<void> _cancelStream({required bool markFailed}) async {
+    ++_streamGeneration;
     _clearStreamTimeouts();
-    if (_streamSubscription != null) {
-      debugPrint('[Agent SSE] 订阅取消 markFailed=$markFailed');
-      _log.info('Agent SSE 订阅取消 markFailed=$markFailed');
-    }
-    await _streamSubscription?.cancel();
+    final subscription = _streamSubscription;
     _streamSubscription = null;
-    if (markFailed) {
-      _finishStreaming(failed: true);
+    if (isSending.value) _finishStreaming(failed: markFailed);
+    await _cancelSubscription(subscription);
+  }
+
+  Future<void> _cancelSubscription(
+    StreamSubscription<AgentStreamEvent>? subscription,
+  ) async {
+    try {
+      await subscription?.cancel();
+    } catch (e, st) {
+      _log.handle(e, stackTrace: st, message: '取消 Agent SSE 失败');
     }
   }
 
@@ -414,19 +476,17 @@ class AgentController extends GetxController {
     String? errorMessage,
   }) async {
     if (!isSending.value && _streamSubscription == null) return;
-    _clearStreamTimeouts();
+    ++_streamGeneration;
     final subscription = _streamSubscription;
     _streamSubscription = null;
-    await subscription?.cancel();
-    if (failed) {
-      _finishStreaming(failed: true);
-      if (errorMessage != null && errorMessage.isNotEmpty) {
-        messageError.value = errorMessage;
-      }
-      _upsertActiveSessionSummary();
-      return;
+    // Settle local state synchronously, never let an old cancel finish a new send.
+    _finishStreaming(failed: failed);
+    if (errorMessage != null && errorMessage.isNotEmpty) {
+      messageError.value = errorMessage;
     }
-    _finishStreaming();
+    _upsertActiveSessionSummary();
+    if (!failed) unawaited(_syncAfterStreamDone());
+    await _cancelSubscription(subscription);
   }
 
   void _appendDelta(String delta) {
@@ -708,5 +768,67 @@ class AgentController extends GetxController {
       serverSessionId: serverSessionId,
       clientSessionId: clientSessionId,
     );
+  }
+
+  AgentRepositoryActions get _actions {
+    final repository = _repository;
+    if (repository is! AgentRepositoryActions) {
+      throw UnsupportedError('当前服务不支持此操作');
+    }
+    return repository as AgentRepositoryActions;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchCommands() =>
+      _actions.fetchCommands();
+
+  Future<Uint8List> downloadAttachment(AgentAttachment attachment) =>
+      _actions.downloadAttachment(attachment);
+
+  Future<Map<String, dynamic>?> uploadAttachment(
+    String filePath,
+    String fileName,
+  ) async {
+    if (!canSend) return null;
+    final actions = _actions;
+    final generation = _conversationGeneration;
+    activeClientSessionId.value ??= _newClientSessionId();
+    isUploading.value = true;
+    try {
+      final receipt = await actions.uploadAttachment(
+        filePath,
+        fileName,
+        sessionId: activeServerSessionId.value ?? activeClientSessionId.value,
+      );
+      if (_disposed || generation != _conversationGeneration) return null;
+      if (receipt == null) throw StateError('附件上传失败');
+      final attachment = AgentAttachment.fromJson(receipt);
+      if (attachment.ref == null || attachment.ref!.isEmpty) {
+        throw StateError('服务端未返回有效的附件引用');
+      }
+      pendingAttachments.add(attachment);
+      return receipt;
+    } finally {
+      if (!_disposed && generation == _conversationGeneration) {
+        isUploading.value = false;
+      }
+    }
+  }
+
+  Future<bool> stopActiveSession() async {
+    if (!isSending.value || isStopping.value) return false;
+    final sessionId = activeServerSessionId.value ?? _outboundSessionId;
+    isStopping.value = true;
+    // Local cancellation is independent of backend acknowledgement or failure.
+    final cancellation = _cancelStream(markFailed: false);
+    try {
+      if (sessionId == null || sessionId.isEmpty) return false;
+      return await _actions.stopSession(sessionId);
+    } catch (e, st) {
+      _log.handle(e, stackTrace: st, message: '停止 Agent 任务失败');
+      return false;
+    } finally {
+      await cancellation;
+      isStopping.value = false;
+    }
   }
 }

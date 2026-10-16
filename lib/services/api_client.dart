@@ -8,14 +8,14 @@ import 'package:path_provider/path_provider.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:talker/talker.dart';
 import 'package:talker_dio_logger/talker_dio_logger.dart';
+import 'package:moviepilot_mobile/services/api_auth_recovery.dart';
+import 'package:moviepilot_mobile/services/api_response_interceptors.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
-import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/dio_adapter_config_stub.dart'
     if (dart.library.io) 'package:moviepilot_mobile/utils/dio_adapter_config_io.dart'
     if (dart.library.js_interop) 'package:moviepilot_mobile/utils/dio_adapter_config_web.dart';
 import 'package:moviepilot_mobile/services/ios_shared_session_service.dart';
 import 'package:moviepilot_mobile/services/hive_service.dart';
-import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:get/get.dart' as g;
 
 enum RequestMethod { get, post, put, delete }
@@ -43,8 +43,6 @@ class ApiHttpException implements Exception {
 }
 
 class ApiClient extends g.GetxController {
-  static const _skipV3EnvelopeUnwrapKey = 'skipV3EnvelopeUnwrap';
-
   final _appService = g.Get.find<AppService>();
   final _iosSharedSessionService = g.Get.find<IosSharedSessionService>();
   final _hiveService = g.Get.find<HiveService>();
@@ -57,16 +55,10 @@ class ApiClient extends g.GetxController {
   String? _cachedCookieHeader;
   Uri? _cachedCookieUri;
   DateTime? _cachedCookieAt;
-  bool _authRedirecting = false;
   bool _authClearing = false;
 
-  /// 401/403 时的静默恢复钩子，由 AuthRepository 注册；返回 true 表示已重新登录成功。
-  Future<bool> Function()? _authRecoveryHandler;
-  bool _silentRecoveryInProgress = false;
-  DateTime? _lastSilentRecoveryAt;
-
-  /// 两次静默重登尝试之间的最小间隔，避免旧 token 的并发 401 反复触发重登。
-  static const Duration _silentRecoveryCooldown = Duration(seconds: 15);
+  /// 401/403 处置器:静默重登恢复,失败则清理会话并踢回登录页。
+  late final ApiAuthRecovery _recovery;
 
   static const Duration _cookieCacheTtl = Duration(seconds: 30);
 
@@ -102,6 +94,7 @@ class ApiClient extends g.GetxController {
     }
     _dioReady = true;
     configureDioHttpClientAdapter(_dio);
+    _recovery = ApiAuthRecovery(clearSession: _clearSession);
 
     final CookieJar cookieJar;
     if (kIsWeb) {
@@ -136,127 +129,22 @@ class ApiClient extends g.GetxController {
       TalkerDioLogger(
         talker: _log.talker,
         settings: const TalkerDioLoggerSettings(
-          printRequestHeaders: true,
-          printResponseHeaders: true,
+          printRequestHeaders: false,
+          printResponseHeaders: false,
           printResponseMessage: true,
-          printRequestData: true,
-          printResponseData: true,
+          printRequestData: false,
+          printResponseData: false,
           logLevel: LogLevel.debug,
         ),
       ),
     );
     if (kIsWeb) {
       _dio.interceptors.add(
-        InterceptorsWrapper(
-          onResponse: (response, handler) {
-            final data = response.data;
-            if (data is! String) {
-              handler.next(response);
-              return;
-            }
-            final raw = data.trim();
-            final status = response.statusCode ?? 0;
-            if (status >= 400) {
-              handler.reject(
-                DioException(
-                  requestOptions: response.requestOptions,
-                  response: response,
-                  type: DioExceptionType.badResponse,
-                  message: raw.isEmpty ? 'HTTP $status' : raw,
-                ),
-              );
-              return;
-            }
-            if (raw.isEmpty) {
-              response.data = null;
-              handler.next(response);
-              return;
-            }
-            try {
-              final decoded = jsonDecode(raw);
-              if (decoded is Map<String, dynamic>) {
-                response.data = decoded;
-              } else if (decoded is Map) {
-                response.data = Map<String, dynamic>.from(decoded);
-              } else {
-                handler.reject(
-                  DioException(
-                    requestOptions: response.requestOptions,
-                    response: response,
-                    type: DioExceptionType.badResponse,
-                    message: 'Unexpected JSON root: ${decoded.runtimeType}',
-                  ),
-                );
-                return;
-              }
-            } catch (_) {
-              handler.reject(
-                DioException(
-                  requestOptions: response.requestOptions,
-                  response: response,
-                  type: DioExceptionType.badResponse,
-                  message: raw,
-                ),
-              );
-              return;
-            }
-            handler.next(response);
-          },
-        ),
+        InterceptorsWrapper(onResponse: decodeJsonResponseOnResponse),
       );
     }
     _dio.interceptors.add(
-      InterceptorsWrapper(
-        onResponse: (response, handler) async {
-          if (response.requestOptions.extra[_skipV3EnvelopeUnwrapKey] == true ||
-              response.requestOptions.responseType != ResponseType.json) {
-            handler.next(response);
-            return;
-          }
-
-          final envelope = response.data;
-          if (envelope is! Map ||
-              envelope['success'] is! bool ||
-              !envelope.containsKey('data')) {
-            handler.next(response);
-            return;
-          }
-
-          if (!g.Get.isRegistered<ServerApiVersionService>()) {
-            handler.next(response);
-            return;
-          }
-
-          try {
-            final isV3 = await g.Get.find<ServerApiVersionService>().isV3();
-            if (!isV3) {
-              handler.next(response);
-              return;
-            }
-          } catch (_) {
-            handler.next(response);
-            return;
-          }
-
-          final data = envelope['data'];
-          if (data == null) {
-            handler.next(response);
-            return;
-          }
-          if (data is Map) {
-            // 业务字段优先：仅在原始数据没有同名键时才补 envelope 的字段，
-            // 避免把接口本身返回的 success / message / data 覆盖掉。
-            final merged = Map<String, dynamic>.from(data);
-            merged.putIfAbsent('success', () => envelope['success']);
-            merged.putIfAbsent('message', () => envelope['message']);
-            merged.putIfAbsent('data', () => data);
-            response.data = merged;
-          } else {
-            response.data = data;
-          }
-          handler.next(response);
-        },
-      ),
+      InterceptorsWrapper(onResponse: unwrapV3EnvelopeOnResponse),
     );
   }
 
@@ -380,7 +268,7 @@ class ApiClient extends g.GetxController {
 
   /// 注册 401/403 时的静默恢复钩子（由 AuthRepository 在初始化时调用）。
   void setAuthRecoveryHandler(Future<bool> Function()? handler) {
-    _authRecoveryHandler = handler;
+    _recovery.handler = handler;
   }
 
   /// 探测服务器连通性：请求 GET /api/v1/system/ping（Swagger 定义），
@@ -541,6 +429,7 @@ class ApiClient extends g.GetxController {
     String? token,
     int? timeout,
     Map<String, dynamic>? headers,
+    bool skipUnauthorizedHandling = false,
   }) async {
     await _ensureReady();
     final authToken = token ?? this.token;
@@ -554,6 +443,7 @@ class ApiClient extends g.GetxController {
         if (authToken != null) 'authorization': 'Bearer $authToken',
         ...?headers,
       },
+      extra: {if (skipUnauthorizedHandling) 'skipUnauthorizedHandling': true},
       followRedirects: true,
       maxRedirects: 5,
       validateStatus: (status) {
@@ -567,7 +457,9 @@ class ApiClient extends g.GetxController {
       queryParameters: queryParameters,
       options: options,
     );
-    _handleUnauthorized(response.statusCode);
+    if (!skipUnauthorizedHandling) {
+      _handleUnauthorized(response.statusCode);
+    }
     return response;
   }
 
@@ -655,7 +547,7 @@ class ApiClient extends g.GetxController {
       },
       extra: {
         if (skipUnauthorizedHandling) 'skipUnauthorizedHandling': true,
-        if (skipV3EnvelopeUnwrap) _skipV3EnvelopeUnwrapKey: true,
+        if (skipV3EnvelopeUnwrap) kSkipV3EnvelopeUnwrapKey: true,
       },
     );
     final response = await _dio.get<T>(
@@ -801,53 +693,7 @@ class ApiClient extends g.GetxController {
   }
 
   void _handleUnauthorized(int? status) {
-    if (status != 401 && status != 403) return;
-    if (_authRedirecting) return;
-    if (!_hasEnteredMain()) return;
-    unawaited(_recoverOrLogout());
-  }
-
-  /// 401/403 的处理：优先尝试用本地保存的账号静默重登恢复会话；
-  /// 恢复失败或无法恢复时才清理会话并踢回登录页。
-  Future<void> _recoverOrLogout() async {
-    final handler = _authRecoveryHandler;
-    if (handler != null) {
-      if (_silentRecoveryInProgress) return;
-      final last = _lastSilentRecoveryAt;
-      if (last != null &&
-          DateTime.now().difference(last) < _silentRecoveryCooldown) {
-        // 冷却期内：最近一次恢复要么成功要么正在进行，静默忽略而非踢出。
-        return;
-      }
-      _silentRecoveryInProgress = true;
-      bool recovered = false;
-      try {
-        recovered = await handler();
-      } catch (_) {
-        recovered = false;
-      } finally {
-        _silentRecoveryInProgress = false;
-        _lastSilentRecoveryAt = DateTime.now();
-      }
-      if (recovered) {
-        _log.info('会话已通过静默重登恢复');
-        return;
-      }
-    }
-
-    _authRedirecting = true;
-    _clearSession();
-    ToastUtil.error('会话已过期，请重新登录');
-    g.Get.offAllNamed('/login');
-    Future.delayed(const Duration(seconds: 1), () {
-      _authRedirecting = false;
-    });
-  }
-
-  bool _hasEnteredMain() {
-    final route = g.Get.currentRoute;
-    if (route.isEmpty) return false;
-    return route != '/login';
+    _recovery.handle(status);
   }
 
   Future<void> _clearSession() async {

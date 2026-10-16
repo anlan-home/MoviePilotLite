@@ -79,7 +79,7 @@ class NativeSurfaceEngine implements PlayerEngine {
   Future<dynamic> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'onEnded':
-        _updateState(_state.copyWith(isPlaying: false));
+        _updateState(_state.copyWith(isPlaying: false, isCompleted: true));
     }
     return null;
   }
@@ -133,6 +133,9 @@ class NativeSurfaceEngine implements PlayerEngine {
             await channel.invokeMethod<Map<dynamic, dynamic>>('getPlaybackState');
         if (raw == null) return;
         final snap = NativeSurfaceSnapshot.fromRaw(raw);
+        // The existing native bridge exposes arbitrary read-only mpv properties.
+        // EOF is needed for audio: last time-pos can stop short of duration.
+        final eof = await channel.invokeMethod<String>('getProperty', 'eof-reached');
         if (snap.videoSize != _videoSizeNotifier.value) {
           _videoSizeNotifier.value = snap.videoSize;
           // 画布尺寸（逻辑 px）与 Kotlin 侧 surfaceChanged 打印的 Surface 尺寸
@@ -151,7 +154,8 @@ class NativeSurfaceEngine implements PlayerEngine {
         _updateState(_state.copyWith(
           position: snap.position,
           duration: snap.duration,
-          isPlaying: snap.isPlaying ?? _state.isPlaying,
+          isPlaying: eof == 'yes' ? false : snap.isPlaying ?? _state.isPlaying,
+          isCompleted: eof == 'yes',
           videoWidth: snap.videoSize.width.round(),
           videoHeight: snap.videoSize.height.round(),
           // 音量/倍速必须回读：宿主每个状态帧都执行 `_volume/_speed =
@@ -201,6 +205,7 @@ class NativeSurfaceEngine implements PlayerEngine {
     Map<String, String>? httpHeaders,
     bool autoPlay = true,
   }) async {
+    _updateState(const PlayerState(engineType: PlayerEngineType.nativeSurface));
     _pendingUrl = url;
     _pendingHeaders = httpHeaders;
     _pendingAutoPlay = autoPlay;

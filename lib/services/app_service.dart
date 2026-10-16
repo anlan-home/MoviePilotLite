@@ -589,8 +589,17 @@ class AppService extends GetxService {
       return canSearch;
     }
 
-    if (normalized == '/system-message') {
+    if (normalized == '/system-message' ||
+        normalized == '/mcp-tools' ||
+        normalized == '/system-maintenance') {
       return isSuperuser;
+    }
+
+    if (normalized == '/mfa-settings' ||
+        normalized == '/download-history' ||
+        normalized == '/music' ||
+        normalized.startsWith('/music/')) {
+      return hasLoggedInSession;
     }
 
     if (normalized.startsWith('/subscribe') || normalized == '/workflow') {
@@ -621,6 +630,7 @@ class AppService extends GetxService {
         normalized == '/downloader-config' ||
         normalized == '/mediaserver-config' ||
         normalized == '/media-organize' ||
+        normalized == '/transfer-queue' ||
         normalized.startsWith('/file-manager') ||
         normalized.startsWith('/plugin') ||
         normalized == '/site' ||
@@ -652,6 +662,15 @@ class AppService extends GetxService {
     if (normalized == '/system-message') {
       return '当前帐号无系统消息权限';
     }
+    if (normalized == '/mcp-tools' || normalized == '/system-maintenance') {
+      return '该功能仅限管理员使用';
+    }
+    if (normalized == '/mfa-settings' ||
+        normalized == '/download-history' ||
+        normalized == '/music' ||
+        normalized.startsWith('/music/')) {
+      return '请先登录后使用该功能';
+    }
     if (normalized.startsWith('/subscribe') || normalized == '/workflow') {
       return '当前帐号无订阅权限';
     }
@@ -677,6 +696,7 @@ class AppService extends GetxService {
         normalized == '/downloader-config' ||
         normalized == '/mediaserver-config' ||
         normalized == '/media-organize' ||
+        normalized == '/transfer-queue' ||
         normalized.startsWith('/file-manager') ||
         normalized.startsWith('/plugin') ||
         normalized == '/site' ||

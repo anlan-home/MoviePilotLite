@@ -5,6 +5,7 @@ import 'package:moviepilot_mobile/modules/media_organize/models/media_organize_m
 import 'package:moviepilot_mobile/modules/storage/controllers/storage_list_controller.dart';
 import 'package:moviepilot_mobile/utils/file_storage_utils.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
+import 'package:moviepilot_mobile/modules/storage/pages/storage_manage_sheet.dart';
 
 class StorageListPage extends GetView<StorageListController> {
   const StorageListPage({super.key});
@@ -87,12 +88,31 @@ class StorageListPage extends GetView<StorageListController> {
                       },
                     );
                   },
+                  onManage: controller.canManage && storage.type != 'local'
+                      ? () => _openStorageManageMenu(context, storage)
+                      : null,
                 ),
               );
             },
           ),
         );
       }),
+    );
+  }
+
+  Future<void> _openStorageManageMenu(
+    BuildContext context,
+    StorageSetting storage,
+  ) async {
+    if (!controller.canManage || controller.isSubmitting.value) return;
+    controller.operationError.value = null;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (_) =>
+          StorageManageSheet(storage: storage, controller: controller),
     );
   }
 }
@@ -103,11 +123,13 @@ class _StorageItemCard extends StatelessWidget {
     required this.storage,
     required this.onTap,
     this.usage,
+    this.onManage,
   });
 
   final StorageSetting storage;
   final StorageUsage? usage;
   final VoidCallback onTap;
+  final VoidCallback? onManage;
 
   @override
   Widget build(BuildContext context) {
@@ -171,6 +193,10 @@ class _StorageItemCard extends StatelessWidget {
                                   label: status.label,
                                   color: status.color,
                                 ),
+                                if (onManage != null) ...[
+                                  const SizedBox(width: 4),
+                                  _ManageButton(onTap: onManage!),
+                                ],
                               ],
                             ),
                             const SizedBox(height: 5),
@@ -292,6 +318,29 @@ class _StorageLogo extends StatelessWidget {
         borderRadius: BorderRadius.circular(14),
       ),
       child: FileStorageUtils.storageIconWidget(type, size: 28),
+    );
+  }
+}
+
+class _ManageButton extends StatelessWidget {
+  const _ManageButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Icon(
+          Icons.more_vert_rounded,
+          size: 18,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
     );
   }
 }
@@ -434,9 +483,9 @@ class _FooterHint extends StatelessWidget {
         Expanded(
           child: Text(
             hint,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: palette.mutedText,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: palette.mutedText),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -561,10 +610,7 @@ class _StorageStatePane extends StatelessWidget {
             ),
             if (actionLabel != null && onAction != null) ...[
               const SizedBox(height: 22),
-              FilledButton(
-                onPressed: onAction,
-                child: Text(actionLabel!),
-              ),
+              FilledButton(onPressed: onAction, child: Text(actionLabel!)),
             ],
           ],
         ),

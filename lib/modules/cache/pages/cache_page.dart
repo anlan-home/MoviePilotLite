@@ -6,6 +6,7 @@ import 'package:get/get.dart';
 import 'package:intl/intl.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
+import 'package:moviepilot_mobile/utils/toast_util.dart';
 
 import '../controllers/cache_controller.dart';
 import '../models/cache_model.dart';
@@ -31,6 +32,40 @@ class CachePage extends GetView<CacheController> {
           icon: const Icon(CupertinoIcons.back),
           onPressed: () => Get.back(),
         ),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: '缓存操作',
+            icon: const Icon(CupertinoIcons.ellipsis_vertical, size: 20),
+            onSelected: (value) {
+              switch (value) {
+                case 'refresh':
+                  _runCacheAction(controller.refreshTorrentCache());
+                case 'clear-torrent':
+                  ToastUtil.warning(
+                    '将清空全部种子缓存,重新搜索时需重建,确定继续吗?',
+                    title: '清空种子缓存',
+                    onConfirm: () =>
+                        _runCacheAction(controller.clearTorrentCache()),
+                  );
+                case 'tmdb':
+                  _showTmdbCacheSheet(context, controller);
+                case 'clear-tmdb':
+                  ToastUtil.warning(
+                    '将清空全部 TMDB 识别缓存,确定继续吗?',
+                    title: '清空 TMDB 识别缓存',
+                    onConfirm: () => _runCacheAction(controller.clearTmdbCache()),
+                  );
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'refresh', child: Text('刷新种子缓存')),
+              PopupMenuItem(value: 'clear-torrent', child: Text('清空种子缓存')),
+              PopupMenuItem(value: 'tmdb', child: Text('查看 TMDB 识别缓存')),
+              PopupMenuItem(value: 'clear-tmdb', child: Text('清空 TMDB 识别缓存')),
+            ],
+          ),
+          const SizedBox(width: 6),
+        ],
       ),
       body: Obx(() => _buildBody(context, controller)),
       floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
@@ -753,6 +788,9 @@ class CachePage extends GetView<CacheController> {
     required bool isLast,
   }) {
     final colors = Theme.of(context).colorScheme;
+    final domain = item.domain?.trim() ?? '';
+    final hash = item.hash?.trim() ?? '';
+    final hasItemActions = domain.isNotEmpty && hash.isNotEmpty;
 
     return Container(
       margin: EdgeInsets.only(bottom: isLast ? 0 : 10),
@@ -765,7 +803,185 @@ class CachePage extends GetView<CacheController> {
           color: colors.outlineVariant.withValues(alpha: 0.22),
         ),
       ),
-      child: _buildCacheItem(context, item, padding: const EdgeInsets.all(12)),
+      child: Stack(
+        children: [
+          _buildCacheItem(context, item, padding: const EdgeInsets.all(12)),
+          if (hasItemActions)
+            Positioned(
+              top: 2,
+              right: 0,
+              child: PopupMenuButton<String>(
+                tooltip: '缓存条目操作',
+                padding: EdgeInsets.zero,
+                icon: Icon(
+                  CupertinoIcons.ellipsis_vertical,
+                  size: 16,
+                  color: colors.onSurfaceVariant,
+                ),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'delete':
+                      ToastUtil.warning(
+                        '确定删除该条种子缓存吗?',
+                        title: '删除缓存',
+                        onConfirm: () => _runCacheAction(
+                          controller.deleteTorrentCacheItem(domain, hash),
+                        ),
+                      );
+                    case 'reidentify':
+                      _runCacheAction(
+                        controller.reidentifyTorrentCacheItem(domain, hash),
+                      );
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'delete', child: Text('删除缓存')),
+                  PopupMenuItem(value: 'reidentify', child: Text('重新识别')),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runCacheAction(
+    Future<({bool ok, String message})> action,
+  ) async {
+    ToastUtil.loading(message: '正在执行…');
+    final result = await action;
+    ToastUtil.dismiss();
+    if (result.ok) {
+      ToastUtil.success(result.message);
+    } else {
+      ToastUtil.error(result.message);
+    }
+  }
+
+  Future<void> _showTmdbCacheSheet(
+    BuildContext context,
+    CacheController controller,
+  ) async {
+    ToastUtil.loading(message: '正在加载…');
+    final items = await controller.loadTmdbCache();
+    ToastUtil.dismiss();
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.7,
+        minChildSize: 0.4,
+        maxChildSize: 0.92,
+        expand: false,
+        builder: (sheetContext, scrollController) => Container(
+          color: Theme.of(sheetContext).colorScheme.surface,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 12, 12, 4),
+                child: Row(
+                  children: [
+                    const Expanded(
+                      child: Text('TMDB 识别缓存',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w800)),
+                    ),
+                    IconButton(
+                      icon: const Icon(CupertinoIcons.clear, size: 20),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: items.isEmpty
+                    ? Center(
+                        child: Text('暂无识别缓存',
+                            style: TextStyle(
+                                fontSize: 13,
+                                color: Theme.of(sheetContext)
+                                    .colorScheme
+                                    .onSurfaceVariant)),
+                      )
+                    : ListView.separated(
+                        controller: scrollController,
+                        padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final entry = items[index];
+                          final key = (entry['key'] ??
+                                  entry['cache_key'] ??
+                                  '')
+                              .toString();
+                          final title = (entry['title'] ??
+                                  entry['name'] ??
+                                  '未知条目')
+                              .toString();
+                          final year = entry['year']?.toString() ?? '';
+                          return ListTile(
+                            dense: true,
+                            contentPadding:
+                                const EdgeInsets.symmetric(horizontal: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              side: BorderSide(
+                                color: Theme.of(sheetContext)
+                                    .colorScheme
+                                    .onSurface
+                                    .withOpacity(0.08),
+                              ),
+                            ),
+                            title: Text(title,
+                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                            subtitle: year.isNotEmpty || key.isNotEmpty
+                                ? Text(
+                                    [if (year.isNotEmpty) year, key]
+                                        .join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 11))
+                                : null,
+                            trailing: key.isNotEmpty
+                                ? IconButton(
+                                    icon: Icon(
+                                      CupertinoIcons.delete,
+                                      size: 18,
+                                      color: Theme.of(sheetContext)
+                                          .colorScheme
+                                          .error,
+                                    ),
+                                    onPressed: () => ToastUtil.warning(
+                                      '确定删除该条识别缓存吗?',
+                                      title: '删除识别缓存',
+                                      onConfirm: () async {
+                                        final result =
+                                            await controller.deleteTmdbCacheItem(
+                                          key,
+                                        );
+                                        if (result.ok) {
+                                          ToastUtil.success('已删除');
+                                          if (sheetContext.mounted) {
+                                            Navigator.of(sheetContext).pop();
+                                          }
+                                        } else {
+                                          ToastUtil.error(result.message);
+                                        }
+                                      },
+                                    ),
+                                  )
+                                : null,
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

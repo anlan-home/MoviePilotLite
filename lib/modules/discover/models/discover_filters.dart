@@ -93,6 +93,85 @@ class DiscoverFilters {
     );
   }
 
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'page': page,
+      'sortBy': sortBy,
+      'mediaType': mediaType,
+      'selectedGenres': selectedGenres,
+      'selectedRegions': selectedRegions,
+      'selectedLanguages': selectedLanguages,
+      'selectedDecade': selectedDecade,
+      'withOriginalLanguage': withOriginalLanguage,
+      'withKeywords': withKeywords,
+      'withWatchProviders': withWatchProviders,
+      'voteAverage': voteAverage,
+      'voteCount': voteCount,
+      'releaseDate': releaseDate,
+      'bangumiCategory': bangumiCategory,
+      'bangumiYear': bangumiYear,
+      'anilistGenre': anilistGenre,
+      'anilistFormat': anilistFormat,
+      'anilistSeason': anilistSeason,
+      'anilistSeasonYear': anilistSeasonYear,
+      'anilistStatus': anilistStatus,
+      'anilistCountry': anilistCountry,
+    };
+  }
+
+  factory DiscoverFilters.fromJson(Map<String, dynamic> json) {
+    List<String> stringList(dynamic value) {
+      if (value is List) {
+        return value
+            .map((e) => e?.toString() ?? '')
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
+      return const <String>[];
+    }
+
+    int intValue(dynamic value, int fallback) {
+      if (value is int) return value;
+      if (value is num) return value.toInt();
+      if (value is String) return int.tryParse(value) ?? fallback;
+      return fallback;
+    }
+
+    String stringValue(dynamic value, String fallback) {
+      if (value is String) return value;
+      if (value == null) return fallback;
+      return value.toString();
+    }
+
+    const defaults = DiscoverFilters();
+    return DiscoverFilters(
+      page: intValue(json['page'], defaults.page),
+      sortBy: stringValue(json['sortBy'], defaults.sortBy),
+      mediaType: stringValue(json['mediaType'], defaults.mediaType),
+      selectedGenres: stringList(json['selectedGenres']),
+      selectedRegions: stringList(json['selectedRegions']),
+      selectedLanguages: stringList(json['selectedLanguages']),
+      selectedDecade: stringValue(json['selectedDecade'], defaults.selectedDecade),
+      withOriginalLanguage:
+          stringValue(json['withOriginalLanguage'], defaults.withOriginalLanguage),
+      withKeywords: stringValue(json['withKeywords'], defaults.withKeywords),
+      withWatchProviders:
+          stringValue(json['withWatchProviders'], defaults.withWatchProviders),
+      voteAverage: intValue(json['voteAverage'], defaults.voteAverage),
+      voteCount: intValue(json['voteCount'], defaults.voteCount),
+      releaseDate: stringValue(json['releaseDate'], defaults.releaseDate),
+      bangumiCategory: stringValue(json['bangumiCategory'], defaults.bangumiCategory),
+      bangumiYear: stringValue(json['bangumiYear'], defaults.bangumiYear),
+      anilistGenre: stringValue(json['anilistGenre'], defaults.anilistGenre),
+      anilistFormat: stringValue(json['anilistFormat'], defaults.anilistFormat),
+      anilistSeason: stringValue(json['anilistSeason'], defaults.anilistSeason),
+      anilistSeasonYear:
+          stringValue(json['anilistSeasonYear'], defaults.anilistSeasonYear),
+      anilistStatus: stringValue(json['anilistStatus'], defaults.anilistStatus),
+      anilistCountry: stringValue(json['anilistCountry'], defaults.anilistCountry),
+    );
+  }
+
   Map<String, String> toQueryParameters({
     bool useOriginCountry = false,
     bool useProductionCountries = false,

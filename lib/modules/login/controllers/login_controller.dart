@@ -353,7 +353,7 @@ class LoginController extends GetxController {
 
   String? _validatedServerInput({bool showEmptyMessage = true}) {
     final raw = serverController.text;
-    final server = raw.trim();
+    var server = raw.trim();
     if (server.isEmpty) {
       if (showEmptyMessage) {
         ToastUtil.info('请输入服务器地址');
@@ -363,6 +363,12 @@ class LoginController extends GetxController {
     if (RegExp(r'\s').hasMatch(server)) {
       ToastUtil.info('服务器地址不能包含空格或换行');
       return null;
+    }
+
+    final lower = server.toLowerCase();
+    if (!lower.startsWith('http://') && !lower.startsWith('https://')) {
+      server = 'https://$server';
+      ToastUtil.info('未输入协议，已自动补全 https://');
     }
 
     final uri = Uri.tryParse(server);

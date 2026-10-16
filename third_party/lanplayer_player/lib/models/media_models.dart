@@ -13,6 +13,11 @@ class MediaItem {
   final String? releaseDate;
   final List<String> genres;
   final MediaType type;
+  final String? album;
+  final String? albumArtist;
+  final List<String> artists;
+  final int? discNumber;
+  final int? trackNumber;
   final int duration;
   final String? imdbId;
   final int? tmdbId;
@@ -53,6 +58,11 @@ class MediaItem {
     this.releaseDate,
     this.genres = const [],
     this.type = MediaType.movie,
+    this.album,
+    this.albumArtist,
+    this.artists = const [],
+    this.discNumber,
+    this.trackNumber,
     this.duration = 0,
     this.imdbId,
     this.tmdbId,
@@ -90,6 +100,11 @@ class MediaItem {
     String? releaseDate,
     List<String>? genres,
     MediaType? type,
+    String? album,
+    String? albumArtist,
+    List<String>? artists,
+    int? discNumber,
+    int? trackNumber,
     bool? isBoxSet,
     String? collectionType,
     int? duration,
@@ -121,6 +136,11 @@ class MediaItem {
       releaseDate: releaseDate ?? this.releaseDate,
       genres: genres ?? this.genres,
       type: type ?? this.type,
+      album: album ?? this.album,
+      albumArtist: albumArtist ?? this.albumArtist,
+      artists: artists ?? this.artists,
+      discNumber: discNumber ?? this.discNumber,
+      trackNumber: trackNumber ?? this.trackNumber,
       duration: duration ?? this.duration,
       imdbId: imdbId ?? this.imdbId,
       tmdbId: tmdbId ?? this.tmdbId,
@@ -129,6 +149,12 @@ class MediaItem {
       isFavorite: isFavorite ?? this.isFavorite,
       watchProgress: watchProgress ?? this.watchProgress,
       sources: sources ?? this.sources,
+      director: director,
+      cast: cast,
+      videoTracks: videoTracks,
+      audioTracks: audioTracks,
+      subtitleTracks: subtitleTracks,
+      people: people,
       seasonNumber: seasonNumber ?? this.seasonNumber,
       episodeNumber: episodeNumber ?? this.episodeNumber,
       seriesTitle: seriesTitle ?? this.seriesTitle,
@@ -155,6 +181,11 @@ class MediaItem {
       'releaseDate': releaseDate,
       'genres': genres,
       'type': type.name,
+      'album': album,
+      'albumArtist': albumArtist,
+      'artists': artists,
+      'discNumber': discNumber,
+      'trackNumber': trackNumber,
       'duration': duration,
       'imdbId': imdbId,
       'tmdbId': tmdbId,
@@ -188,6 +219,11 @@ class MediaItem {
       releaseDate: json['releaseDate'] as String?,
       genres: (json['genres'] as List<dynamic>?)?.cast<String>() ?? [],
       type: MediaType.values.firstWhere((t) => t.name == json['type'], orElse: () => MediaType.movie),
+      album: json['album'] as String?,
+      albumArtist: json['albumArtist'] as String?,
+      artists: (json['artists'] as List?)?.cast<String>() ?? const [],
+      discNumber: json['discNumber'] as int?,
+      trackNumber: json['trackNumber'] as int?,
       duration: json['duration'] as int? ?? 0,
       imdbId: json['imdbId'] as String?,
       tmdbId: json['tmdbId'] as int?,
@@ -223,6 +259,11 @@ class MediaItem {
           releaseDate == other.releaseDate &&
           listEquals(genres, other.genres) &&
           type == other.type &&
+          album == other.album &&
+          albumArtist == other.albumArtist &&
+          listEquals(artists, other.artists) &&
+          discNumber == other.discNumber &&
+          trackNumber == other.trackNumber &&
           duration == other.duration &&
           imdbId == other.imdbId &&
           tmdbId == other.tmdbId &&
@@ -244,6 +285,11 @@ class MediaItem {
       releaseDate.hashCode ^
       genres.hashCode ^
       type.hashCode ^
+      album.hashCode ^
+      albumArtist.hashCode ^
+      Object.hashAll(artists) ^
+      discNumber.hashCode ^
+      trackNumber.hashCode ^
       duration.hashCode ^
       imdbId.hashCode ^
       tmdbId.hashCode ^
@@ -254,7 +300,7 @@ class MediaItem {
       sources.hashCode;
 }
 
-enum MediaType { movie, series, episode }
+enum MediaType { movie, series, episode, audio }
 
 class MediaSource {
   final String id;

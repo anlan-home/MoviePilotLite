@@ -17,6 +17,7 @@ import 'package:moviepilot_mobile/modules/search_result/models/search_result_mod
 import 'package:moviepilot_mobile/modules/setting/controllers/setting_controller.dart';
 import 'package:moviepilot_mobile/modules/setting/models/setting_models.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:moviepilot_mobile/utils/prefs_keys.dart';
@@ -44,6 +45,26 @@ class DownloadController extends GetxController {
   final selectedDirectory = ''.obs;
   String? _preferredDownloaderName;
   String _preferredDirectory = '';
+  String? _preferredDirectoryScope;
+  String? _availablePathsScope;
+  Set<String> _availableServerPaths = {};
+  int _directorySelectionRevision = 0;
+  Future<void> _selectionWrites = Future<void>.value();
+
+  String get directoryPreferenceScope {
+    final app = Get.find<AppService>();
+    final server = (_apiClient.baseUrl ?? app.baseUrl ?? '').replaceFirst(RegExp(r'/+$'), '');
+    final user = app.loginResponse?.userId ?? app.userInfo?.id;
+    return jsonEncode([server, user]);
+  }
+
+  /// Called only after the sheet successfully fetches /download/paths.
+  void setAvailableDownloadPaths(Iterable<String> paths, {required String scope}) {
+    if (scope != directoryPreferenceScope) return;
+    _availablePathsScope = scope;
+    _availableServerPaths = paths.where((path) => path.isNotEmpty).toSet();
+    _applyPreferredDirectory();
+  }
 
   // TMDB ID
   final tmdbId = ''.obs;
@@ -141,8 +162,19 @@ class DownloadController extends GetxController {
   Future<void> _restoreSheetSelections() async {
     final prefs = await SharedPreferences.getInstance();
     _preferredDownloaderName = prefs.getString(kDownloadSheetLastDownloaderKey);
-    _preferredDirectory = prefs.getString(kDownloadSheetLastDirectoryKey) ?? '';
     _applyPreferredDownloader();
+    await restoreDirectorySelection();
+  }
+
+  /// Legacy device-wide paths are intentionally not migrated across accounts.
+  Future<void> restoreDirectorySelection() async {
+    final scope = directoryPreferenceScope;
+    final revision = _directorySelectionRevision;
+    final prefs = await SharedPreferences.getInstance();
+    if (scope != directoryPreferenceScope ||
+        revision != _directorySelectionRevision || isClosed) return;
+    _preferredDirectoryScope = scope;
+    _preferredDirectory = prefs.getString('$kDownloadSheetLastDirectoryKey::$scope') ?? '';
     _applyPreferredDirectory();
   }
 
@@ -167,31 +199,40 @@ class DownloadController extends GetxController {
   }
 
   void _applyPreferredDirectory() {
-    final preferred = _preferredDirectory.trim();
-    if (preferred.isEmpty) {
-      if (selectedDirectory.value.isEmpty) return;
+    final scope = directoryPreferenceScope;
+    if (_preferredDirectoryScope != scope || _preferredDirectory.isEmpty) {
       selectedDirectory.value = '';
       return;
     }
-
-    final available = directorySuggestions;
-    if (available.contains(preferred)) {
-      selectedDirectory.value = preferred;
-      return;
+    final validPath = _availablePathsScope == scope
+        ? _availableServerPaths.contains(_preferredDirectory)
+        : !Uri.parse(_preferredDirectory).hasScheme &&
+            directorySuggestions.contains(_preferredDirectory);
+    if (validPath) {
+      selectedDirectory.value = _preferredDirectory;
+    } else {
+      // A remote path is restored only after this server/user confirms it.
+      selectedDirectory.value = '';
     }
-
-    if (selectedDirectory.value.isEmpty) return;
-    selectedDirectory.value = '';
   }
 
-  Future<void> _persistSheetSelections() async {
-    final prefs = await SharedPreferences.getInstance();
+  Future<void> _persistSheetSelections() {
+    // Capture values before awaiting so a profile switch cannot re-scope a write.
+    final scope = directoryPreferenceScope;
     final downloaderName = selectedDownloader.value?.name ?? '';
-    await prefs.setString(kDownloadSheetLastDownloaderKey, downloaderName);
-    await prefs.setString(
-      kDownloadSheetLastDirectoryKey,
-      selectedDirectory.value,
-    );
+    final directory = _preferredDirectoryScope == scope
+        ? _preferredDirectory
+        : null;
+    _selectionWrites = _selectionWrites.then((_) async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(kDownloadSheetLastDownloaderKey, downloaderName);
+      if (directory != null) {
+        await prefs.setString('$kDownloadSheetLastDirectoryKey::$scope', directory);
+      }
+    }).catchError((Object error, StackTrace stack) {
+      _log.handle(error, stackTrace: stack, message: '保存下载目录选择失败');
+    });
+    return _selectionWrites;
   }
 
   /// 获取下载器加载状态
@@ -624,6 +665,7 @@ class DownloadController extends GetxController {
     }
 
     isDownloading.value = true;
+    ToastUtil.info('正在创建下载任务...');
     try {
       final mediaIn = _buildDownloadMediaIn(item, customTmdbId: customTmdbId);
       final request = await _buildDownloadRequest(
@@ -699,9 +741,7 @@ class DownloadController extends GetxController {
             if (!redirectFailed) {
               _printDownload('startDownload SUCCESS (redirect)');
               Get.back();
-              Future.delayed(const Duration(seconds: 1), () {
-                ToastUtil.success('下载任务已创建');
-              });
+              ToastUtil.success('下载任务已创建');
             } else {
               final errorMsg = _downloadApiErrorMessage(
                 redirectData,
@@ -742,9 +782,7 @@ class DownloadController extends GetxController {
         if (!explicitFailure) {
           _printDownload('startDownload SUCCESS');
           Get.back();
-          Future.delayed(const Duration(seconds: 1), () {
-            ToastUtil.success('下载任务已创建');
-          });
+          ToastUtil.success('下载任务已创建');
         } else {
           final errorMsg = _downloadApiErrorMessage(data, '下载失败');
           _printDownload('startDownload FAIL (business): $errorMsg');
@@ -1384,8 +1422,10 @@ class DownloadController extends GetxController {
   }
 
   void setDirectory(String directory) {
-    selectedDirectory.value = directory;
+    _directorySelectionRevision++;
+    _preferredDirectoryScope = directoryPreferenceScope;
     _preferredDirectory = directory;
+    _applyPreferredDirectory();
     unawaited(_persistSheetSelections());
   }
 

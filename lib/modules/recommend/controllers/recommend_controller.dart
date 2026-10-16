@@ -15,6 +15,8 @@ import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:moviepilot_mobile/modules/recommend/models/recommend_source.dart';
+import 'package:moviepilot_mobile/services/user_config_service.dart';
 
 const List<String> _movieSubCategories = <String>[
   '正在热映',
@@ -44,8 +46,6 @@ const List<String> _allSubCategories = <String>[
   ..._animeSubCategories,
   ..._chartSubCategories,
 ];
-
-const String _recommendBaseUrl = '/api/v1/recommend/';
 
 const Map<String, String> _subCategoryKeyMap = <String, String>{
   '正在热映': 'douban_showing',
@@ -92,6 +92,108 @@ class RecommendController extends GetxController {
   final selectedSubCategory = RxnString();
   final _visibleCategories = RecommendCategory.values.toList().obs;
   final _hiddenSubCategoryKeys = <String>[].obs;
+  final dynamicSources = <RecommendSource>[].obs;
+  final sourceLoadError = RxnString();
+  final preferenceSyncError = RxnString();
+  static const _serverPreferenceKey = 'MoviePilotMobile.RecommendSources';
+  final _userConfig = UserConfigService();
+  Future<void> _preferenceQueue = Future.value();
+  int _preferenceRevision = 0;
+
+  List<String> subCategoriesFor(RecommendCategory category) => [
+    ...category.subCategories,
+    ...dynamicSources
+        .where((source) => _categoryForSource(source) == category)
+        .map((source) => source.name),
+  ];
+
+  RecommendCategory _categoryForSource(RecommendSource source) {
+    return switch (source.type.toLowerCase()) {
+      '电影' || 'movie' => RecommendCategory.movie,
+      '电视剧' || 'tv' => RecommendCategory.tv,
+      '动漫' || 'anime' => RecommendCategory.anime,
+      _ => RecommendCategory.chart,
+    };
+  }
+
+  Future<void> reloadSources() async {
+    sourceLoadError.value = null;
+    final profile = _profileKey();
+    try {
+      final sources = await RecommendSourceService().load();
+      if (isClosed || profile != _profileKey()) return;
+      final names = _allSubCategories.toSet();
+      final paths = _subCategoryKeyMap.values
+          .map(RecommendSource.resolveApiPath)
+          .toSet();
+      // Preserve built-in names/keys used by the existing local preferences.
+      dynamicSources.assignAll(
+        sources.where(
+          (source) =>
+              !names.contains(source.name) &&
+              paths.add(source.apiPath) &&
+              names.add(source.name),
+        ),
+      );
+      _syncSubCategory();
+      prefetchAllVisibleCategories();
+    } catch (e, st) {
+      sourceLoadError.value = '扩展推荐源加载失败，仍可使用默认来源';
+      _log.handle(e, stackTrace: st, message: '加载扩展推荐源失败');
+    }
+  }
+
+  Map<String, dynamic> _preferenceSnapshot() => {
+    'visibleCategories': _visibleCategories
+        .map((category) => category.name)
+        .toList(),
+    'hiddenSubCategoryKeys': _hiddenSubCategoryKeys.toList(),
+  };
+
+  Future<void> _loadServerPreferences() async {
+    final profile = _profileKey();
+    final revision = _preferenceRevision;
+    try {
+      final value = await _userConfig.read(_serverPreferenceKey);
+      if (isClosed ||
+          profile != _profileKey() ||
+          revision != _preferenceRevision) {
+        return;
+      }
+      if (value is! Map) return; // No preference yet: retain local defaults.
+      final visible = _parseVisibleCategories(value['visibleCategories']);
+      if (visible.isNotEmpty) {
+        if (!visible.contains(RecommendCategory.all)) {
+          visible.insert(0, RecommendCategory.all);
+        }
+        _visibleCategories.assignAll(visible);
+      }
+      _hiddenSubCategoryKeys.assignAll(
+        _parseStringList(value['hiddenSubCategoryKeys']),
+      );
+      await _saveLocalConfig();
+    } catch (e, st) {
+      preferenceSyncError.value = '云端偏好读取失败，使用本地设置';
+      _log.handle(e, stackTrace: st, message: '读取推荐用户偏好失败');
+    }
+  }
+
+  void _persistPreferences() {
+    _preferenceRevision++;
+    unawaited(_saveLocalConfig());
+    final snapshot = _preferenceSnapshot();
+    final profile = _profileKey();
+    _preferenceQueue = _preferenceQueue.then((_) async {
+      if (_profileKey() != profile || isClosed) return;
+      try {
+        await _userConfig.write(_serverPreferenceKey, snapshot);
+        preferenceSyncError.value = null;
+      } catch (e, st) {
+        preferenceSyncError.value = '云端偏好保存失败，设置已保存在本机';
+        _log.handle(e, stackTrace: st, message: '保存推荐用户偏好失败');
+      }
+    });
+  }
 
   final itemsByKey = <String, List<RecommendApiItem>>{}.obs;
   final isLoadingByKey = <String, bool>{}.obs;
@@ -141,9 +243,12 @@ class RecommendController extends GetxController {
   Future<void> _initLocalConfig() async {
     await _loadLocalConfig();
     _syncSubCategory();
-    if (!_appService.canDiscovery) {
+    if (!_appService.canDiscovery || isClosed) {
       return;
     }
+    await Future.wait([_loadServerPreferences(), reloadSources()]);
+    if (isClosed) return;
+    _ensureSelectedCategoryVisible();
     prefetchAllVisibleCategories();
     ever(selectedCategory, (_) {
       if (!_appService.canDiscovery) return;
@@ -194,7 +299,10 @@ class RecommendController extends GetxController {
   }
 
   String? keyForSubCategory(String subCategory) {
-    return _subCategoryKeyMap[subCategory];
+    return _subCategoryKeyMap[subCategory] ??
+        dynamicSources
+            .firstWhereOrNull((source) => source.name == subCategory)
+            ?.apiPath;
   }
 
   List<RecommendApiItem> itemsForSubCategory(String subCategory) {
@@ -275,7 +383,7 @@ class RecommendController extends GetxController {
     _visibleCategories.assignAll(next);
     _ensureSelectedCategoryVisible();
     prefetchAllVisibleCategories();
-    unawaited(_saveLocalConfig());
+    _persistPreferences();
   }
 
   bool isSubCategoryVisible(RecommendCategory category, String subCategory) {
@@ -298,7 +406,7 @@ class RecommendController extends GetxController {
     _hiddenSubCategoryKeys.refresh();
     _syncSubCategory();
     prefetchAllVisibleCategories();
-    unawaited(_saveLocalConfig());
+    _persistPreferences();
   }
 
   Future<void> _loadLocalConfig() async {
@@ -430,9 +538,9 @@ class RecommendController extends GetxController {
   }
 
   List<String> _visibleSubCategoriesFor(RecommendCategory category) {
-    return category.subCategories
-        .where((sub) => isSubCategoryVisible(category, sub))
-        .toList();
+    return subCategoriesFor(
+      category,
+    ).where((sub) => isSubCategoryVisible(category, sub)).toList();
   }
 
   List<String> _visibleAllSubCategories() {
@@ -440,7 +548,7 @@ class RecommendController extends GetxController {
     for (final category in RecommendCategory.values) {
       if (category == RecommendCategory.all) continue;
       if (!isCategoryVisible(category)) continue;
-      for (final sub in category.subCategories) {
+      for (final sub in subCategoriesFor(category)) {
         if (isSubCategoryVisible(category, sub)) {
           result.add(sub);
         }
@@ -489,7 +597,7 @@ class RecommendController extends GetxController {
     errorByKey.refresh();
 
     try {
-      final url = '$_recommendBaseUrl$key';
+      final url = RecommendSource.resolveApiPath(key);
       final response = await _apiClient.get<dynamic>(url);
       final statusCode = response.statusCode ?? 0;
       if (statusCode >= 400) {

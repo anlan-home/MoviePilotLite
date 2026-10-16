@@ -395,4 +395,57 @@ class SubscribeService extends GetxService {
     }
     return result;
   }
+
+  // V2 and V3 both retain these GET routes (V3 imports submaintenance).
+  bool get canMaintainAll => _appService.isSuperuser;
+  bool get canSearchSubscriptions => _appService.canSubscribe;
+  final maintenanceBusy = false.obs;
+
+  Future<bool> maintenanceSupported() async =>
+      canMaintainAll || canSearchSubscriptions;
+
+  Future<({bool ok, String message})> _runMaintenanceAction(
+    String path,
+    String doingLabel,
+  ) async {
+    final allowed = path.endsWith('/search')
+        ? canSearchSubscriptions
+        : canMaintainAll;
+    if (!allowed) return (ok: false, message: '当前帐号无此订阅维护权限');
+    if (maintenanceBusy.value) return (ok: false, message: '订阅维护正在提交，请稍候');
+    maintenanceBusy.value = true;
+    try {
+      final response = await _apiClient.get<dynamic>(path);
+      final status = response.statusCode ?? 0;
+      if (status < 200 || status >= 300) {
+        return (ok: false, message: '$doingLabel失败 (HTTP $status)');
+      }
+      final data = response.data;
+      final message = data is Map ? data['message']?.toString() : null;
+      final ok = data is Map && data['success'] == true;
+      return (
+        ok: ok,
+        message: (message?.isNotEmpty ?? false)
+            ? message!
+            : ok ? '已提交执行' : '$doingLabel失败：服务端未确认成功',
+      );
+    } catch (e) {
+      _log.handle(e, message: '$doingLabel异常');
+      return (ok: false, message: '$doingLabel失败，请稍后重试');
+    } finally {
+      maintenanceBusy.value = false;
+    }
+  }
+
+  /// GET /api/v1/subscribe/refresh 刷新订阅（搜索订阅缺货）
+  Future<({bool ok, String message})> refreshSubscribes() =>
+      _runMaintenanceAction('/api/v1/subscribe/refresh', '刷新订阅');
+
+  /// GET /api/v1/subscribe/check 刷新订阅 TMDB 信息
+  Future<({bool ok, String message})> checkSubscribes() =>
+      _runMaintenanceAction('/api/v1/subscribe/check', '刷新订阅信息');
+
+  /// GET /api/v1/subscribe/search 搜索所有订阅
+  Future<({bool ok, String message})> searchSubscribes() =>
+      _runMaintenanceAction('/api/v1/subscribe/search', '搜索订阅');
 }

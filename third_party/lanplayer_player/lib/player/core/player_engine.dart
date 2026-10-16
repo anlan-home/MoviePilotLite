@@ -38,6 +38,7 @@ enum PlayerEngineType {
 class PlayerState {
   final bool isPlaying;
   final bool isBuffering;
+  final bool isCompleted;
   final Duration position;
   final Duration duration;
   final Duration buffer;
@@ -52,6 +53,7 @@ class PlayerState {
   const PlayerState({
     this.isPlaying = false,
     this.isBuffering = false,
+    this.isCompleted = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.buffer = Duration.zero,
@@ -67,6 +69,7 @@ class PlayerState {
   PlayerState copyWith({
     bool? isPlaying,
     bool? isBuffering,
+    bool? isCompleted,
     Duration? position,
     Duration? duration,
     Duration? buffer,
@@ -81,6 +84,7 @@ class PlayerState {
     return PlayerState(
       isPlaying: isPlaying ?? this.isPlaying,
       isBuffering: isBuffering ?? this.isBuffering,
+      isCompleted: isCompleted ?? this.isCompleted,
       position: position ?? this.position,
       duration: duration ?? this.duration,
       buffer: buffer ?? this.buffer,

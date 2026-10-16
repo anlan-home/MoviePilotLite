@@ -11,6 +11,7 @@ import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:moviepilot_mobile/modules/recommend/models/recommend_source.dart';
 
 /// 推荐分类列表控制器，支持分页加载
 class RecommendCategoryListController extends GetxController {
@@ -35,7 +36,6 @@ class RecommendCategoryListController extends GetxController {
   final _authRepository = Get.find<AuthRepository>();
   final _appService = Get.find<AppService>();
 
-  static const String _basePath = '/api/v1/recommend/';
   bool _cookieRefreshTriggered = false;
   int? _previousImageCacheMaximumSize;
   int? _previousImageCacheMaximumSizeBytes;
@@ -131,10 +131,10 @@ class RecommendCategoryListController extends GetxController {
       error.value = null;
     }
     try {
-      final path = '$_basePath$_key';
+      final uri = Uri.parse(RecommendSource.resolveApiPath(_key));
       final response = await _apiClient.get<dynamic>(
-        path,
-        queryParameters: {'page': page, 'title': _title},
+        uri.path,
+        queryParameters: {...uri.queryParameters, 'page': page},
       );
       final statusCode = response.statusCode ?? 0;
       if (statusCode >= 400) {
