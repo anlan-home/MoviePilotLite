@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/cupertino.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
@@ -182,7 +180,7 @@ class CacheController extends GetxController {
     }
     final next = selectedSites.where(options.contains).toSet();
     if (next.length != selectedSites.length) {
-      selectedSites.addAll(next);
+      selectedSites.assignAll(next);
     }
   }
 
@@ -207,32 +205,7 @@ class CacheController extends GetxController {
     return null;
   }
 
-  CacheResponse? _parseResponse(dynamic data) {
-    if (data == null) return null;
-    try {
-      if (data is Map) {
-        return CacheResponse.fromJson(Map<String, dynamic>.from(data));
-      }
-      if (data is String) {
-        final trimmed = data.trim();
-        if (!_looksLikeJson(trimmed)) return null;
-        final decoded = jsonDecode(trimmed);
-        if (decoded is Map) {
-          return CacheResponse.fromJson(Map<String, dynamic>.from(decoded));
-        }
-      }
-    } catch (_) {
-      return null;
-    }
-    return null;
-  }
-
-  bool _looksLikeJson(String input) {
-    if (input.isEmpty) return false;
-    final first = input[0];
-    final last = input[input.length - 1];
-    return (first == '{' && last == '}') || (first == '[' && last == ']');
-  }
+  CacheResponse? _parseResponse(dynamic data) => parseCacheResponse(data);
 
   // ---------------- 缓存管理动作（v2/v3.1.5 双线一致） ----------------
 
