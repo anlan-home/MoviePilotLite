@@ -161,6 +161,12 @@ class ExoFFmpegEngine implements PlayerEngine {
       _updateState(_state.copyWith(
         duration: Duration(milliseconds: durationMs),
         isPlaying: isPlaying,
+        isBuffering: result['isBuffering'] as bool? ?? false,
+        // 旧原生 open 不返回播放意图，使用本次请求，不能沿用上一媒体的意图。
+        playWhenReady: result['playWhenReady'] as bool? ?? autoPlay,
+        isCompleted: result['isCompleted'] as bool? ?? false,
+        // 新媒体成功打开后，旧媒体的解码错误不再适用。
+        error: null,
       ));
 
       // 订阅原生状态推送（EventChannel）。原生不可用（旧包）时自动降级到轮询。
@@ -201,6 +207,7 @@ class ExoFFmpegEngine implements PlayerEngine {
 
   /// 将原生状态 Map 应用到 _state（EventChannel 推送与 getState 轮询共用）
   void _applyStateMap(Map<String, dynamic> result) {
+    final isPlaying = result['isPlaying'] as bool? ?? false;
     final vw = result['videoWidth'] as int? ?? 0;
     final vh = result['videoHeight'] as int? ?? 0;
     // 视频尺寸变化时更新 _videoSizeNotifier（FittedBox 据此缩放）
@@ -212,8 +219,11 @@ class ExoFFmpegEngine implements PlayerEngine {
       }
     }
     _updateState(_state.copyWith(
-      isPlaying: result['isPlaying'] as bool? ?? false,
+      isPlaying: isPlaying,
       isBuffering: result['isBuffering'] as bool? ?? false,
+      // 旧原生快照缺少播放意图时回退到当前播放状态，避免保留旧的 true。
+      playWhenReady: result['playWhenReady'] as bool? ?? isPlaying,
+      isCompleted: result['isCompleted'] as bool? ?? false,
       position: Duration(milliseconds: result['positionMs'] as int? ?? 0),
       duration: Duration(milliseconds: result['durationMs'] as int? ?? 0),
       buffer: Duration(milliseconds: result['bufferedMs'] as int? ?? 0),
@@ -222,7 +232,7 @@ class ExoFFmpegEngine implements PlayerEngine {
       isHdr: result['isHdr'] as bool? ?? false,
       videoWidth: vw,
       videoHeight: vh,
-      // 原生层"有声无画"检测（设备缺解码器时 ExoPlayer 静默只播音频）
+      // 原生层"有声无画"检测；健康快照的 null/缺省值明确清除旧错误。
       error: result['error'] as String?,
     ));
   }

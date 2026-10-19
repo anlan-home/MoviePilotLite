@@ -82,6 +82,9 @@ class ExoFFmpegPlugin: FlutterPlugin {
                                 "textureId" to state.textureId,
                                 "durationMs" to state.durationMs,
                                 "isPlaying" to state.isPlaying,
+                                "isBuffering" to state.isBuffering,
+                                "playWhenReady" to state.playWhenReady,
+                                "isCompleted" to state.isCompleted,
                                 "isHdr" to state.isHdr,
                                 "videoWidth" to state.videoWidth,
                                 "videoHeight" to state.videoHeight
@@ -115,6 +118,8 @@ class ExoFFmpegPlugin: FlutterPlugin {
                             result.success(mapOf(
                                 "isPlaying" to state.isPlaying,
                                 "isBuffering" to state.isBuffering,
+                                "playWhenReady" to state.playWhenReady,
+                                "isCompleted" to state.isCompleted,
                                 "positionMs" to state.positionMs,
                                 "durationMs" to state.durationMs,
                                 "bufferedMs" to state.bufferedMs,

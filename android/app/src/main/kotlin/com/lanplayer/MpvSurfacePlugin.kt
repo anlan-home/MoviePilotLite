@@ -67,11 +67,13 @@ class MpvSurfacePlatformView(
 ) : io.flutter.plugin.platform.PlatformView {
     private val surfaceView: SurfaceView = SurfaceView(context)
     private var mpvHandle: Long = 0
-    private val pendingCommands = mutableListOf<(Surface) -> Unit>()
+    private val pendingCommands = mutableListOf<(Surface?) -> Unit>()
     private var surfaceReady = false
+    private var disposed = false
 
     private val holderCallback = object : SurfaceHolder.Callback {
         override fun surfaceCreated(holder: SurfaceHolder) {
+            if (disposed) return
             // 先记下「进这个回调前是否已有 handle」：首次创建的 handle 由下面
             // 排队的 create 流程直接绑定，不该再重挂一次（多余 VO 重配会闪）。
             val hadHandle = mpvHandle != 0L
@@ -123,7 +125,8 @@ class MpvSurfacePlatformView(
                     val args = call.arguments as Map<*, *>
                     val url = args["url"] as String
                     val hwdec = args["hwdec"] as? String ?: "mediacodec"
-                    runWhenSurface { surface ->
+                    val autoPlay = args["autoPlay"] as? Boolean ?: true
+                    runWhenSurface(result) { surface ->
                         mpvHandle = MpvNative.nativeCreate(surface)
                         MpvNative.nativeSetProperty(mpvHandle, "hwdec", hwdec)
                         MpvNative.nativeSetProperty(mpvHandle, "vo", "gpu-next")
@@ -143,6 +146,8 @@ class MpvSurfacePlatformView(
                         // 字幕字体目录（LibassBridge 已有的字体拷贝逻辑复用）
                         val fontsDir = File(context.filesDir, "fonts").apply { mkdirs() }
                         MpvNative.nativeSetProperty(mpvHandle, "sub-fonts-dir", fontsDir.absolutePath)
+                        // 必须先设 pause 再加载，autoPlay=false 不得短暂起播。
+                        MpvNative.nativeSetProperty(mpvHandle, "pause", if (autoPlay) "no" else "yes")
                         MpvNative.nativeCommand(mpvHandle, "loadfile \"$url\" replace")
                         result.success(mpvHandle != 0L)
                     }
@@ -193,6 +198,7 @@ class MpvSurfacePlatformView(
                     ))
                 }
                 "destroy" -> {
+                    cancelPendingCommands()
                     if (mpvHandle != 0L) {
                         MpvNative.nativeDestroy(mpvHandle)
                         mpvHandle = 0L
@@ -204,17 +210,31 @@ class MpvSurfacePlatformView(
         }
     }
 
-    private inline fun runWhenSurface(crossinline block: (Surface) -> Unit) {
-        if (surfaceReady) {
-            surfaceView.holder.surface?.let { block(it) }
+    private inline fun runWhenSurface(result: MethodChannel.Result, crossinline block: (Surface) -> Unit) {
+        if (disposed) {
+            result.success(false)
+        } else if (surfaceReady) {
+            val surface = surfaceView.holder.surface
+            if (surface == null) result.success(false) else block(surface)
         } else {
-            pendingCommands.add { block(it) }
+            pendingCommands.add { surface ->
+                if (surface == null) result.success(false) else block(surface)
+            }
         }
+    }
+
+    private fun cancelPendingCommands() {
+        pendingCommands.forEach { it(null) }
+        pendingCommands.clear()
     }
 
     override fun getView(): android.view.View = surfaceView
 
     override fun dispose() {
+        disposed = true
+        surfaceView.holder.removeCallback(holderCallback)
+        channel.setMethodCallHandler(null)
+        cancelPendingCommands()
         if (mpvHandle != 0L) {
             MpvNative.nativeDestroy(mpvHandle)
             mpvHandle = 0L
