@@ -127,6 +127,10 @@ class AgentAttachment {
     required this.url,
     required this.mimeType,
     required this.type,
+    this.ref,
+    this.localPath,
+    this.size,
+    this.uploadStatus,
   });
 
   final String id;
@@ -134,6 +138,25 @@ class AgentAttachment {
   final String url;
   final String mimeType;
   final String type;
+  final String? ref;
+  final String? localPath;
+  final int? size;
+  final String? uploadStatus;
+
+  String get inputRef => ref ?? url;
+  bool get isAudio => type == 'audio' || mimeType.startsWith('audio/');
+
+  Map<String, dynamic> toInputJson() {
+    if (inputRef.trim().isEmpty) throw StateError('附件引用不能为空');
+    return {
+      'ref': inputRef,
+      if (name.isNotEmpty) 'name': name,
+      if (mimeType.isNotEmpty) 'mime_type': mimeType,
+      if (localPath != null) 'local_path': localPath,
+      if (size != null) 'size': size,
+      if (uploadStatus != null) 'status': uploadStatus,
+    };
+  }
 
   bool get hasDisplayValue => name.isNotEmpty || url.isNotEmpty;
 
@@ -159,6 +182,7 @@ class AgentAttachment {
       'path',
       'preview_url',
       'download_url',
+      'ref',
     ]);
     final name = _firstString(json, const [
       'name',
@@ -178,6 +202,10 @@ class AgentAttachment {
         'content_type',
       ]),
       type: _firstString(json, const ['type', 'kind']),
+      ref: _readNullableString(json['ref']),
+      localPath: _readNullableString(json['local_path']),
+      size: _readInt(json['size']),
+      uploadStatus: _readNullableString(json['status']),
     );
   }
 

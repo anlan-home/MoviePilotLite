@@ -18,6 +18,7 @@ class MediaOrganizeItemCard extends StatelessWidget {
     this.showPopupMenu = true,
     this.onSelectionChanged,
     this.onTap,
+    this.onAiRedo,
     this.onDeleteTransferRecordOnly,
     this.onDeleteTransferRecordAndSourceFile,
     this.onDeleteTransferRecordAndMediaLibraryFile,
@@ -33,6 +34,7 @@ class MediaOrganizeItemCard extends StatelessWidget {
   final bool showPopupMenu;
   final ValueChanged<bool>? onSelectionChanged;
   final VoidCallback? onTap;
+  final VoidCallback? onAiRedo;
   final void Function()? onDeleteTransferRecordOnly;
   final void Function()? onDeleteTransferRecordAndSourceFile;
   final void Function()? onDeleteTransferRecordAndMediaLibraryFile;
@@ -460,7 +462,7 @@ class MediaOrganizeItemCard extends StatelessWidget {
 
   Widget _buildPopupMenu(BuildContext context) {
     return PopupMenuButton<String>(
-      tooltip: '删除选项',
+      tooltip: '整理操作',
       borderRadius: BorderRadius.circular(12),
       icon: Icon(
         Icons.more_vert_rounded,
@@ -468,6 +470,9 @@ class MediaOrganizeItemCard extends StatelessWidget {
       ),
       onSelected: (value) {
         switch (value) {
+          case 'ai-redo':
+            onAiRedo?.call();
+            break;
           case 'record':
             onDeleteTransferRecordOnly?.call();
             break;
@@ -483,6 +488,14 @@ class MediaOrganizeItemCard extends StatelessWidget {
         }
       },
       itemBuilder: (context) => [
+        if (onAiRedo != null && item.id != null && item.id! > 0)
+          _buildMenuItem(
+            context,
+            value: 'ai-redo',
+            label: 'AI 重新整理',
+            icon: Icons.auto_fix_high_rounded,
+            color: Theme.of(context).colorScheme.primary,
+          ),
         _buildMenuItem(
           context,
           value: 'record',

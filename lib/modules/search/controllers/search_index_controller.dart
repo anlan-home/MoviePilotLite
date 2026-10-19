@@ -1,8 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:moviepilot_mobile/modules/music/models/music_models.dart';
 import 'package:moviepilot_mobile/modules/search/pages/search_mid_sheet.dart';
 import 'package:moviepilot_mobile/modules/search/services/search_keyword_hints_service.dart';
+import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
+import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 
 import '../models/search_history.dart';
@@ -33,6 +38,11 @@ class SearchIndexController extends GetxController {
   final RxList<SearchSuggestionItem> suggestions = <SearchSuggestionItem>[].obs;
   final RxBool hasSearchFocus = false.obs;
 
+  /// 搜索页"浏览"宫格的音乐卡片：仅 v3 服务端展示，封面取自音乐探索接口
+  final RxList<MusicExploreItem> musicExploreItems = <MusicExploreItem>[].obs;
+  final RxBool musicBrowseSupported = false.obs;
+  bool _musicBrowseRequested = false;
+
   late final Worker _keywordWorker;
   final SearchHistoryRepository _historyRepository;
 
@@ -54,6 +64,7 @@ class SearchIndexController extends GetxController {
       time: _debounceDuration,
     );
     loadHistories();
+    unawaited(ensureMusicBrowseLoaded());
   }
 
   void _syncSearchFocus() {
@@ -114,6 +125,46 @@ class SearchIndexController extends GetxController {
     histories.assignAll(_historyRepository.load());
   }
 
+  /// 幂等加载音乐浏览卡片数据：v2 服务端不展示，拉取失败仅降级为无封面
+  Future<void> ensureMusicBrowseLoaded() async {
+    if (_musicBrowseRequested) return;
+    _musicBrowseRequested = true;
+    try {
+      final supported = await Get.find<ServerApiVersionService>().isV3();
+      if (!supported) return;
+      musicBrowseSupported.value = true;
+      final response = await Get.find<ApiClient>().get<dynamic>(
+        '/api/v1/music/explore',
+        queryParameters: {
+          'page': 1,
+          'count': 10,
+          'media_source': 'musicbrainz',
+          'entity': 'album',
+        },
+        skipV3EnvelopeUnwrap: true,
+      );
+      final data = response.data;
+      final payload = data is Map && data.containsKey('data')
+          ? data['data']
+          : data;
+      if (payload is! List) return;
+      final albums = payload
+          .whereType<Map>()
+          .map(
+            (e) => MusicExploreItem.fromJson(
+              Map<String, dynamic>.from(e),
+              fallbackSource: 'musicbrainz',
+            ),
+          )
+          .where((item) => item.coverUrl?.isNotEmpty == true)
+          .take(2)
+          .toList();
+      musicExploreItems.assignAll(albums);
+    } catch (_) {
+      // 封面拉取失败不影响入口展示
+    }
+  }
+
   void saveHistory(String term) {
     _historyRepository.save(term);
     loadHistories();
@@ -156,6 +207,9 @@ class SearchIndexController extends GetxController {
           '/media-search-list',
           parameters: {'keyword': term, 'type': 'person'},
         );
+        break;
+      case SearchSuggestionCategory.music:
+        Get.toNamed('/music/search', parameters: {'keyword': term});
         break;
       case SearchSuggestionCategory.share:
         Get.toNamed('/subscribe-share', parameters: {'keyword': term});
@@ -258,6 +312,14 @@ class SearchIndexController extends GetxController {
         subtitle: '按演员名称搜索',
         keyword: term,
       ),
+      if (musicBrowseSupported.value)
+        SearchSuggestionItem(
+          category: SearchSuggestionCategory.music,
+          leading: '音乐',
+          title: '音乐 $quoted',
+          subtitle: '音乐人、专辑与单曲',
+          keyword: term,
+        ),
       SearchSuggestionItem(
         category: SearchSuggestionCategory.share,
         leading: '媒体',
@@ -295,6 +357,10 @@ class SearchIndexController extends GetxController {
 
   List<SearchSuggestionItem> get siteSuggestionItems => suggestions
       .where((item) => item.category == SearchSuggestionCategory.site)
+      .toList();
+
+  List<SearchSuggestionItem> get musicSuggestionItems => suggestions
+      .where((item) => item.category == SearchSuggestionCategory.music)
       .toList();
 
   List<SearchSuggestionItem> get localHistorySuggestionItems => suggestions

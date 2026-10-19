@@ -68,6 +68,26 @@ class TrickplayTile {
   });
 }
 
+/// Optional capability. Results are playable tracks, never album/container IDs.
+/// Keeping this separate preserves existing MediaServerService implementations.
+abstract interface class AudioSearchCapability {
+  bool get supportsAudioSearch;
+  Future<List<MediaItem>> searchAudio(String album, {String? artist});
+}
+
+extension MediaServerAudioSearch on MediaServerService {
+  bool get supportsAudioSearch =>
+      this is AudioSearchCapability &&
+      (this as AudioSearchCapability).supportsAudioSearch;
+
+  Future<List<MediaItem>> searchAudio(String album, {String? artist}) {
+    if (!supportsAudioSearch) {
+      throw UnsupportedError('此媒体服务器不支持音频专辑播放');
+    }
+    return (this as AudioSearchCapability).searchAudio(album, artist: artist);
+  }
+}
+
 abstract class MediaServerService {
   String baseUrl;
   final Dio dio;
@@ -219,7 +239,7 @@ abstract class MediaServerService {
 
 // ==================== EmbyService ====================
 
-class EmbyService extends MediaServerService {
+class EmbyService extends MediaServerService implements AudioSearchCapability {
   String apiKey;
   String? userId;
   String? _username;
@@ -245,6 +265,8 @@ class EmbyService extends MediaServerService {
     _playSessionId = _generateSessionId();
   }
 
+  final Set<String> _audioItemIds = {};
+  final Map<String, String> _audioSourceIds = {};
   final Map<String, _CachedDetailItem> _detailsCache = {};
   final Map<String, _CachedSeasons> _seasonsCache = {};
   final Map<String, _CachedEpisodes> _episodesCache = {};
@@ -637,6 +659,7 @@ class EmbyService extends MediaServerService {
   Future<String> getStreamUrl(String itemId, {String? quality, bool burnInSubtitle = false, int? subtitleIndex}) async {
     await _ensureUserId();
     await _ensureAuth();
+    if (_audioItemIds.contains(itemId)) return _getAudioStreamUrl(itemId);
     final bitrate = _resolveBitrate(quality);
 
     // 字幕烧录：请求服务器用 FFmpeg 把字幕编码进视频流（SubtitleMethod=Encode）。
@@ -868,6 +891,137 @@ class EmbyService extends MediaServerService {
     return url;
   }
 
+  /// AudioService GET /Audio/{Id}/stream (Static=true) and
+  /// Items/{Id}/PlaybackInfo are documented by Emby; Jellyfin AudioController
+  /// exposes the same audio route. Profile shape follows jellyfin-web's
+  /// browserDeviceProfile audio entries, not the video-only profile above.
+  Future<String> _getAudioStreamUrl(String itemId) async {
+    _lastTranscodeUrl = null;
+    refreshPlaySession();
+    final response = await dio.post('/Items/$itemId/PlaybackInfo', data: {
+      'UserId': userId,
+      'EnableDirectPlay': true,
+      'EnableDirectStream': true,
+      'AllowAudioStreamCopy': true,
+      'DeviceProfile': {
+        'DirectPlayProfiles': [
+          {
+            'Type': 'Audio',
+            'Container': 'mp3,aac,m4a,m4b,mp4,flac,wav,ogg,oga,opus,alac',
+          },
+        ],
+        'TranscodingProfiles': [
+          {'Type': 'Audio', 'Container': 'mp3', 'AudioCodec': 'mp3', 'Protocol': 'http', 'Context': 'Streaming'},
+        ],
+      },
+    });
+    _throwIfHttpError(response);
+    final data = response.data;
+    final sources = data is Map ? data['MediaSources'] : null;
+    if (sources is! List || sources.isEmpty || sources.first is! Map) {
+      throw StateError('媒体服务器未返回可播放的音频源');
+    }
+    final source = sources.first as Map;
+    final sourceId = source['Id']?.toString() ?? itemId;
+    _audioSourceIds[itemId] = sourceId;
+    final sessionId = data['PlaySessionId']?.toString();
+    if (sessionId != null && sessionId.isNotEmpty) _playSessionId = sessionId;
+    final rawTranscode = source['TranscodingUrl']?.toString() ?? '';
+    if (rawTranscode.isNotEmpty) {
+      _lastTranscodeUrl = rawTranscode.startsWith('http')
+          ? rawTranscode
+          : '$baseUrl${rawTranscode.startsWith('/') ? '' : '/'}$rawTranscode';
+    }
+    if (source['SupportsDirectPlay'] != true &&
+        source['SupportsDirectStream'] != true) {
+      if (_lastTranscodeUrl != null) return _lastTranscodeUrl!;
+      throw StateError('媒体服务器不支持此音频的直连或转码播放');
+    }
+    return Uri.parse('$baseUrl/Audio/${Uri.encodeComponent(itemId)}/stream')
+        .replace(queryParameters: {
+          'api_key': apiKey,
+          'Static': 'true',
+          'MediaSourceId': sourceId,
+          'PlaySessionId': _playSessionId,
+        }).toString();
+  }
+
+  @override
+  bool get supportsAudioSearch => true;
+
+  /// Emby ItemsService GET /Items documents Albums (pipe-delimited),
+  /// IncludeItemTypes, UserId, Recursive, StartIndex and Limit. Jellyfin's
+  /// ItemsController exposes the same contract. Do not reuse movie search or
+  /// use SearchTerm: a track's name need not contain its album name.
+  @override
+  Future<List<MediaItem>> searchAudio(String album, {String? artist}) async {
+    final albumName = album.trim();
+    if (albumName.isEmpty) return [];
+    if (!await ensureAuthenticated()) {
+      throw StateError('音频搜索需要媒体服务器认证');
+    }
+    await _ensureUserId();
+    String normalize(String value) =>
+        value.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+    final wantedAlbum = normalize(albumName);
+    final wantedArtist = normalize(artist ?? '');
+    final tracks = <String, MediaItem>{};
+    var start = 0;
+    const limit = 200;
+    while (true) {
+      final response = await dio.get('/Items', queryParameters: {
+        'UserId': userId,
+        'IncludeItemTypes': 'Audio',
+        'Albums': albumName,
+        'Recursive': true,
+        'StartIndex': start,
+        'Limit': limit,
+        'Fields': 'MediaSources,MediaStreams,UserData',
+      });
+      _throwIfHttpError(response);
+      final data = response.data;
+      if (data is! Map || data['Items'] is! List) {
+        throw const FormatException('音频搜索响应缺少 Items');
+      }
+      final items = data['Items'] as List;
+      for (final raw in items.whereType<Map>()) {
+        if (raw['Type'] != 'Audio') continue;
+        final track = _parseItem(Map<String, dynamic>.from(raw));
+        if (track.id.isEmpty ||
+            (track.videoTracks?.isNotEmpty ?? false) ||
+            normalize(track.album ?? '') != wantedAlbum) {
+          continue;
+        }
+        final artistNames = [
+          ...track.artists,
+          if (track.albumArtist != null) track.albumArtist!,
+          ...((raw['AlbumArtists'] as List?) ?? const []).map((e) => e.toString()),
+          ...((raw['AlbumArtistItems'] as List?) ?? const [])
+              .whereType<Map>().map((e) => e['Name']?.toString() ?? ''),
+        ];
+        if (wantedArtist.isNotEmpty &&
+            !artistNames.any((name) => normalize(name) == wantedArtist)) {
+          continue;
+        }
+        tracks[track.id] = track;
+      }
+      start += items.length;
+      final total = (data['TotalRecordCount'] as num?)?.toInt();
+      if (items.isEmpty ||
+          (total != null ? start >= total : items.length < limit)) break;
+    }
+    final result = tracks.values.toList();
+    result.sort((a, b) {
+      var comparison = (a.discNumber ?? 1).compareTo(b.discNumber ?? 1);
+      if (comparison == 0) {
+        comparison = (a.trackNumber ?? 0).compareTo(b.trackNumber ?? 0);
+      }
+      if (comparison == 0) comparison = a.title.compareTo(b.title);
+      return comparison == 0 ? a.id.compareTo(b.id) : comparison;
+    });
+    return result;
+  }
+
   @override
   Future<List<MediaItem>> search(String query) async {
     try {
@@ -929,7 +1083,7 @@ class EmbyService extends MediaServerService {
     try {
       final data = <String, dynamic>{
         'ItemId': itemId,
-        'MediaSourceId': mediaSourceId ?? itemId,
+        'MediaSourceId': mediaSourceId ?? _audioSourceIds[itemId] ?? itemId,
         'PlayMethod': 'DirectStream',
         'CanSeek': true,
         'IsPaused': false,
@@ -952,7 +1106,7 @@ class EmbyService extends MediaServerService {
       final ticks = positionMs * 10000; // ms → 100ns ticks
       final data = <String, dynamic>{
         'ItemId': itemId,
-        'MediaSourceId': mediaSourceId ?? itemId,
+        'MediaSourceId': mediaSourceId ?? _audioSourceIds[itemId] ?? itemId,
         'PositionTicks': ticks,
         'IsPaused': !isPlaying,
         'IsMuted': false,
@@ -977,7 +1131,7 @@ class EmbyService extends MediaServerService {
     try {
       final data = <String, dynamic>{
         'ItemId': itemId,
-        'MediaSourceId': mediaSourceId ?? itemId,
+        'MediaSourceId': mediaSourceId ?? _audioSourceIds[itemId] ?? itemId,
         'PlaySessionId': _playSessionId,
       };
       if (positionMs != null) {
@@ -1329,6 +1483,9 @@ class EmbyService extends MediaServerService {
 
   MediaItem _parseItem(dynamic item) {
     final m = item is Map<String, dynamic> ? item : <String, dynamic>{};
+    if (m['Type'] == 'Audio' && (m['Id']?.toString() ?? '').isNotEmpty) {
+      _audioItemIds.add(m['Id'].toString());
+    }
     final mediaSources = (m['MediaSources'] as List?) ?? [];
     final firstSource = mediaSources.isNotEmpty ? mediaSources.first : null;
     final providerIds = m['ProviderIds'] as Map?;
@@ -1348,7 +1505,18 @@ class EmbyService extends MediaServerService {
       logoUrl: m['ImageTags']?['Logo'] != null ? '$baseUrl/Items/${m['Id']}/Images/Logo?api_key=$apiKey' : null,
       overview: m['Overview'], rating: (m['CommunityRating'] as num?)?.toDouble(),
       year: m['ProductionYear'], genres: (m['Genres'] as List?)?.map((e) => e.toString()).toList() ?? [],
-      type: m['Type'] == 'Series' ? MediaType.series : m['Type'] == 'Episode' ? MediaType.episode : MediaType.movie,
+      type: m['Type'] == 'Audio' ? MediaType.audio : m['Type'] == 'Series' ? MediaType.series : m['Type'] == 'Episode' ? MediaType.episode : MediaType.movie,
+      album: m['Album']?.toString(),
+      albumArtist: m['AlbumArtist']?.toString(),
+      artists: {
+        ...((m['Artists'] as List?) ?? const []).map((e) => e.toString()),
+        if (m['AlbumArtist'] is String) m['AlbumArtist'] as String,
+        ...((m['AlbumArtists'] as List?) ?? const []).map((e) => e.toString()),
+        ...((m['AlbumArtistItems'] as List?) ?? const []).whereType<Map>()
+            .map((e) => e['Name']?.toString() ?? ''),
+      }.where((name) => name.trim().isNotEmpty).toList(),
+      discNumber: (m['ParentIndexNumber'] as num?)?.toInt(),
+      trackNumber: (m['IndexNumber'] as num?)?.toInt(),
       isBoxSet: m['Type'] == 'BoxSet',
       seasonNumber: m['ParentIndexNumber'] ?? m['SeasonNumber'],
       episodeNumber: m['IndexNumber'] ?? m['EpisodeNumber'],
@@ -1400,8 +1568,7 @@ class EmbyService extends MediaServerService {
 
   List<Map<String, dynamic>>? _extractStreams(Map m, String type) {
     final s = (m['MediaSources'] as List?)?.firstOrNull;
-    if (s == null) return null;
-    final streams = (s['MediaStreams'] as List?)?.where((e) => e['Type'] == type).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)).toList();
+    final streams = ((s?['MediaStreams'] ?? m['MediaStreams']) as List?)?.where((e) => e['Type'] == type).map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)).toList();
     return streams != null && streams.isNotEmpty ? streams : null;
   }
 }
@@ -1576,6 +1743,16 @@ class JellyfinService extends EmbyService {
 // login() 先尝试 Jellyfin 认证，失败则回退到飞牛专有 API
 
 class FnOSService extends EmbyService {
+  // FnOS's native video API has no verified audio album contract. Inheritance
+  // from Emby must not accidentally advertise Jellyfin audio compatibility.
+  @override
+  bool get supportsAudioSearch => false;
+
+  @override
+  Future<List<MediaItem>> searchAudio(String album, {String? artist}) async {
+    throw UnsupportedError('飞牛影视尚无已验证的音频专辑播放接口');
+  }
+
   // 飞牛专有 API 密钥（来自 FlyNarwhal app_constants.dart）
   static const String _fnosApiKey = 'NDzZTVxnRKP8Z0jXg1VAMonaG8akvh';
   static const String _fnosApiSecret = '16CCEB3D-AB42-077D-36A1-F355324E4237';

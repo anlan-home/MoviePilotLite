@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:lanplayer_player/lanplayer_player.dart' as kit;
 
+import '../../../applog/app_log.dart';
 import '../controllers/player_launch_controller.dart';
 
 /// MP 实色选集底部弹层(与订阅文件统计同风格):
@@ -68,8 +70,8 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
           .timeout(const Duration(seconds: 15));
       if (!mounted) return;
       final season = _pickInitialSeason(eps);
-      // ignore: avoid_print
-      print('[EpisodePicker] 剧集=${widget.series.id} 共加载=${eps.length} 集 '
+      Get.find<AppLog>().debug(
+          '[EpisodePicker] 剧集=${widget.series.id} 共加载=${eps.length} 集 '
           '实际季=${eps.map((e) => e.seasonNumber).toSet().toList()} '
           '选中季=$season 详情季=${widget.currentSeason}');
       setState(() {
@@ -79,8 +81,7 @@ class _EpisodePickerSheetState extends State<_EpisodePickerSheet> {
       });
     } catch (e) {
       if (!mounted) return;
-      // ignore: avoid_print
-      print('[EpisodePicker] 加载失败: $e');
+      Get.find<AppLog>().error('[EpisodePicker] 加载失败: $e');
       setState(() {
         _error = '分集加载失败';
         _loading = false;

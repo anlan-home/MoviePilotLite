@@ -93,9 +93,10 @@ If needed, you can further use the `web_scraper.py` file to scrape the web page 
 - Test file operations should use Path objects for cross-platform compatibility
 - Mock external API calls and file operations to make tests reliable and fast
 
-## Task: 搜索进度条单行防溢出
-[X] 底部 52 高 pill 内 Column 溢出 8px：去掉第二行站点 + 多余竖向 padding
-[X] 进度文案单行 ellipsis，Expanded 吃剩余高度
+## Task: APPLitePush 消息类型过滤适配 (PR #3)
+[X] 配置页加入 message_types 多选
+[X] parseSelect 兼容 Map items
+[X] 缺省回退默认类型列表（含智能体）
 
 ## Lessons
 - Multifunction refreshDashboard 勿在刷新开头把 DataReady 置 false；*DataReady 控制列表/加载态，置 false 会清空可见列表。切回更多 Tab（index==3）会触发 refreshDashboard

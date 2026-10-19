@@ -60,6 +60,16 @@ class DynamicFormController extends GetxController {
   final formMode = false.obs;
   String? pluginId;
 
+  /// 服务端声明的渲染模式(vue/vuetify)。
+  /// 适配策略:注册了原生适配器的特殊插件 ID 优先走适配器;
+  /// vuetify 模式走通用 Vuetify 渲染;其余 vue 插件留待逐插件适配,
+  /// 在此之前引导用户到 Web 端配置。
+  final serverRenderMode = RxnString();
+
+  /// 配置表单(conf)中移动端通用渲染暂不支持、会被丢弃的组件名。
+  /// 仅提示,不阻断:这些字段的值保存在 model 中不会被破坏。
+  final unsupportedFormComponents = RxList<String>();
+
   /// page 模式下的原始 FormNode 列表，供 VuetifyRenderer 直接渲染
   final pageNodes = <FormNode>[].obs;
 
@@ -83,6 +93,13 @@ class DynamicFormController extends GetxController {
 
   /// vue 模式下的插件适配器，供页面判断是否展示插件专属操作
   PluginFormAdapter? get pluginAdapter => _pluginAdapter;
+
+  /// 服务端声明 vue 模式且没有注册原生适配器:App 当前无法渲染该插件界面。
+  bool get isUnsupportedVuePlugin =>
+      serverRenderMode.value == 'vue' && _pluginAdapter == null;
+
+  /// 服务器 Web 端地址,用于 vue 插件引导用户到 Web 端配置。
+  String? get serverWebUrl => _appService.baseUrl;
 
   String? _getToken() =>
       _appService.loginResponse?.accessToken ??
@@ -150,6 +167,8 @@ class DynamicFormController extends GetxController {
     appLitePushLastTestText.value = null;
     _appLitePushMoviePilotApiKey = null;
     _pluginAdapter = null;
+    serverRenderMode.value = null;
+    unsupportedFormComponents.clear();
     if (isAppLitePushPlugin) {
       formMode.value = true;
     }
@@ -198,9 +217,8 @@ class DynamicFormController extends GetxController {
         _formModel.value = {};
         return;
       }
-      final parsed = DynamicFormResponse.fromJson(
-        Map<String, dynamic>.from(map),
-      );
+      final parsed = DynamicFormResponse.fromJson(_normalizeFormPayload(map));
+      serverRenderMode.value = parsed.render_mode?.toLowerCase().trim();
       if (isAppLitePushPlugin) {
         _appLitePushMoviePilotApiKey = _extractAppLitePushMoviePilotApiKey(
           parsed,
@@ -261,6 +279,11 @@ class DynamicFormController extends GetxController {
     } else {
       pageNodes.clear();
     }
+    // 表单块会静默丢弃子集外的输入组件,这里收集并提示用户到 Web 端配置;
+    // 对应字段的值仍在 model 中,保存不会破坏已存配置。
+    unsupportedFormComponents.assignAll(
+      VuetifyComponentSubset.collectUnsupportedRawComponents(parsed.conf),
+    );
     final blocksList = FormBlockConverter.convert(parsed);
     blocks.assignAll(blocksList);
   }
@@ -338,6 +361,26 @@ class DynamicFormController extends GetxController {
       }
     }
     return null;
+  }
+
+  /// 宽容归一化 conf/page:个别插件不按 List[dict] 约定返回时,
+  /// 单个 dict 包成列表,列表里的非 Map 条目丢弃,避免整个表单解析失败。
+  /// (生成的反序列化对 conf/page 是强类型转换,这里必须先行归一。)
+  Map<String, dynamic> _normalizeFormPayload(Map<String, dynamic> map) {
+    Object? normalize(Object? raw) {
+      if (raw is Map) return [Map<String, dynamic>.from(raw)];
+      if (raw is List) {
+        return raw
+            .whereType<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList();
+      }
+      return raw;
+    }
+
+    return Map<String, dynamic>.from(map)
+      ..['conf'] = normalize(map['conf'])
+      ..['page'] = normalize(map['page']);
   }
 
   final formModePlugins = [

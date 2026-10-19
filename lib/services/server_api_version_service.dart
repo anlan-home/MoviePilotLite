@@ -10,7 +10,10 @@ import 'package:moviepilot_mobile/services/api_client.dart';
 ///   而旧式前缀形态在另一台服务端上会**挂住不返回**(40 秒无响应);
 /// - 因此判定不能只看版本号,要"能力表优先 + 实测结果纠正"。
 class ServerApiVersionService extends GetxService {
-  final _apiClient = Get.find<ApiClient>();
+  ServerApiVersionService({ApiClient? apiClient})
+    : _apiClient = apiClient ?? Get.find<ApiClient>();
+
+  final ApiClient _apiClient;
 
   /// baseUrl -> 服务端广告的媒体来源取值(如 themoviedb/douban)
   final _sources = <String, Set<String>>{};
@@ -38,6 +41,9 @@ class ServerApiVersionService extends GetxService {
   }
 
   /// 服务端媒体来源表(探测 GET /api/v1/media/source)。
+  /// v3.1.5 定义了该端点，但发布的 Swagger 未收录；v2 无此接口返回 404，
+  /// 探测结果为空集即旧式契约。注意不能改用 /api/v1/discover/source 探测——
+  /// 那是「探索数据源」接口,v2 也存在,会把 v2 误判为 v3。
   /// 返回 null 表示这次没探测成功(不缓存,下次重试);返回空集合表示探测成功
   /// 但服务端没有这个能力(旧式契约)。
   Future<Set<String>?> mediaSourceValues() {
@@ -49,7 +55,7 @@ class ServerApiVersionService extends GetxService {
     if (pending != null) return pending;
 
     final generation = _generation;
-    final detection = _detect(baseUrl, generation);
+    final detection = _detect(baseUrl, generation, _apiClient.token);
     _inFlight[baseUrl] = detection;
     return detection;
   }
@@ -94,15 +100,38 @@ class ServerApiVersionService extends GetxService {
     _inFlight.clear();
   }
 
-  Future<Set<String>?> _detect(String baseUrl, int generation) async {
+  Future<Set<String>?> _detect(
+    String baseUrl,
+    int generation,
+    String? token,
+  ) async {
     try {
+      // 钉住捕获时的绝对地址与 token:ApiClient 就绪等待期间若切换服务器,
+      // 相对路径会被发往新 baseUrl,且省略 token 会回落到新服务器的凭据。
+      final root = baseUrl.replaceFirst(RegExp(r'/+$'), '');
       final response = await _apiClient.get<dynamic>(
-        '/api/v1/media/source',
+        '$root/api/v1/media/source',
+        token: token ?? '',
+        skipUnauthorizedHandling: true,
         skipV3EnvelopeUnwrap: true,
       );
+      // 响应返回时作用域已变化(切服/失效):整体丢弃,不写任何缓存。
+      if (generation != _generation ||
+          baseUrl != _normalizeBaseUrl(_apiClient.baseUrl)) {
+        return null;
+      }
       final status = response.statusCode ?? 0;
+      if (status == 404) {
+        if (generation == _generation) _sources[baseUrl] = <String>{};
+        return <String>{};
+      }
       if (status != 200) return null;
-      final values = _extractSources(response.data);
+      final data = response.data;
+      if (data is Map && data['success'] == false) return null;
+      if (data is! List && !(data is Map && data['data'] is List)) {
+        return null;
+      }
+      final values = _extractSources(data);
       if (generation == _generation) {
         _sources[baseUrl] = values;
       }
@@ -120,7 +149,8 @@ class ServerApiVersionService extends GetxService {
   Set<String> _extractSources(dynamic data) {
     final list = switch (data) {
       List<dynamic> l => l,
-      Map<dynamic, dynamic> m when m['data'] is List => m['data'] as List<dynamic>,
+      Map<dynamic, dynamic> m when m['data'] is List =>
+        m['data'] as List<dynamic>,
       _ => const <dynamic>[],
     };
     final out = <String>{};

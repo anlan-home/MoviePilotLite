@@ -71,6 +71,9 @@ class DiscoverController extends GetxController {
   static const Duration _forceRefreshInterval = Duration(seconds: 10);
   static const Duration _throttleGap = Duration(milliseconds: 350);
   static const String _lastSelectedSourceKey = 'discover.lastSelectedSourceId';
+  static const String _filtersBySourceKey = 'discover.filtersBySource';
+  static const String _dynamicFiltersBySourceKey =
+      'discover.dynamicFiltersBySource';
 
   final _apiClient = Get.find<ApiClient>();
   final _log = Get.find<AppLog>();
@@ -158,6 +161,7 @@ class DiscoverController extends GetxController {
     try {
       final prefs = await SharedPreferences.getInstance();
       storedSourceId = prefs.getString(_lastSelectedSourceKey) ?? '';
+      _restorePersistedFilters(prefs);
     } catch (e, st) {
       _log.handle(e, stackTrace: st, message: '读取探索来源偏好失败');
     }
@@ -200,14 +204,73 @@ class DiscoverController extends GetxController {
     }
   }
 
+  Future<void> _persistFilters() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localJson = <String, dynamic>{
+        for (final entry in _filtersBySource.entries)
+          entry.key: entry.value.toJson(),
+      };
+      final dynamicJson = <String, dynamic>{
+        for (final entry in _dynamicFiltersBySource.entries)
+          entry.key: entry.value.toJson(),
+      };
+      await prefs.setString(_filtersBySourceKey, jsonEncode(localJson));
+      await prefs.setString(
+        _dynamicFiltersBySourceKey,
+        jsonEncode(dynamicJson),
+      );
+    } catch (e, st) {
+      _log.handle(e, stackTrace: st, message: '保存探索筛选偏好失败');
+    }
+  }
+
+  void _restorePersistedFilters(SharedPreferences prefs) {
+    final localRaw = prefs.getString(_filtersBySourceKey);
+    if (localRaw != null && localRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(localRaw);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (key is! String || value is! Map) return;
+            _filtersBySource[key] = DiscoverFilters.fromJson(
+              _toStringKeyMap(value),
+            );
+          });
+        }
+      } catch (e, st) {
+        _log.handle(e, stackTrace: st, message: '解析探索筛选偏好失败');
+      }
+    }
+
+    final dynamicRaw = prefs.getString(_dynamicFiltersBySourceKey);
+    if (dynamicRaw != null && dynamicRaw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(dynamicRaw);
+        if (decoded is Map) {
+          decoded.forEach((key, value) {
+            if (key is! String || value is! Map) return;
+            _dynamicFiltersBySource[key] = DiscoverDynamicFilters.fromJson(
+              _toStringKeyMap(value),
+            );
+          });
+        }
+      } catch (e, st) {
+        _log.handle(e, stackTrace: st, message: '解析动态探索筛选偏好失败');
+      }
+    }
+  }
+
   void updateFilters(DiscoverFilters next) {
     filters.value = next;
     _filtersBySource[selectedSource.value.id] = next;
+    unawaited(_persistFilters());
   }
 
   void updateDynamicFilters(DiscoverDynamicFilters next) {
     dynamicFilters.value = next;
     _dynamicFiltersBySource[selectedSource.value.id] = next;
+    unawaited(_persistFilters());
   }
 
   void ensureUserCookieRefreshed() {
@@ -281,6 +344,7 @@ class DiscoverController extends GetxController {
     }
     _suspendAutoLoad = false;
     unawaited(_persistSelectedSource(source));
+    unawaited(_persistFilters());
     loadCurrent(forceRefresh: true);
   }
 

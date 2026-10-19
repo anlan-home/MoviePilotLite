@@ -75,6 +75,7 @@ class ExoPlayerEngine implements PlayerEngine {
     try {
       await _controller?.dispose();
       _isInitialized = false;
+      _updateState(const PlayerState(engineType: PlayerEngineType.exo));
 
       final uri = Uri.parse(url);
       
@@ -118,6 +119,7 @@ class ExoPlayerEngine implements PlayerEngine {
     _updateState(_state.copyWith(
       isPlaying: value.isPlaying,
       isBuffering: value.isBuffering,
+      isCompleted: value.isCompleted,
       duration: value.duration,
       position: value.position,
       error: value.errorDescription,

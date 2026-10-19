@@ -26,6 +26,7 @@ class SubscribeItemCard extends StatelessWidget {
     super.key,
     required this.item,
     required this.isTv,
+    this.isMusic = false,
     this.layout = SubscribeItemCardLayout.list,
     this.onTap,
     this.onMoreTap,
@@ -33,6 +34,7 @@ class SubscribeItemCard extends StatelessWidget {
 
   final SubscribeItem item;
   final bool isTv;
+  final bool isMusic;
   final SubscribeItemCardLayout layout;
   final VoidCallback? onTap;
   final Function(SubscribeItemCardType type)? onMoreTap;
@@ -246,13 +248,26 @@ class SubscribeItemCard extends StatelessWidget {
       return CachedImage(imageUrl: url, fit: BoxFit.cover);
     }
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF30435D), Color(0xFF192436)],
-        ),
+      decoration: BoxDecoration(
+        gradient: isMusic
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF8B5CF6), Color(0xFF4C1D95)],
+              )
+            : const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF30435D), Color(0xFF192436)],
+              ),
       ),
+      child: isMusic
+          ? const Icon(
+              Icons.library_music_rounded,
+              size: 42,
+              color: Colors.white,
+            )
+          : null,
     );
   }
 
@@ -535,8 +550,22 @@ class SubscribeItemCard extends StatelessWidget {
       height: _posterHeight,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        color: Colors.white.withValues(alpha: 0.16),
+        gradient: isMusic
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF8B5CF6), Color(0xFF4C1D95)],
+              )
+            : null,
+        color: isMusic ? null : Colors.white.withValues(alpha: 0.16),
       ),
+      child: isMusic
+          ? const Icon(
+              Icons.library_music_rounded,
+              size: 30,
+              color: Colors.white,
+            )
+          : null,
     );
   }
 
@@ -544,23 +573,24 @@ class SubscribeItemCard extends StatelessWidget {
     final isPaused = item.state?.toUpperCase() == 'S';
     final isRunning = item.state?.toUpperCase() == 'R';
     final size = compact ? 34.0 : 30.0;
-    final items = [
-      SubscribeItemCardType.edit,
-      SubscribeItemCardType.search,
-      SubscribeItemCardType.detail,
-      SubscribeItemCardType.files,
-    ];
-    if (isPaused) {
-      items.add(SubscribeItemCardType.resume);
-    }
-    if (isRunning) {
-      items.add(SubscribeItemCardType.pause);
-    }
-    items.add(SubscribeItemCardType.reset);
-    if (isTv) {
-      items.add(SubscribeItemCardType.shared);
-    }
-    items.add(SubscribeItemCardType.delete);
+    final items = isMusic
+        ? <SubscribeItemCardType>[
+            SubscribeItemCardType.search,
+            if (isPaused) SubscribeItemCardType.resume,
+            if (isRunning) SubscribeItemCardType.pause,
+            SubscribeItemCardType.delete,
+          ]
+        : <SubscribeItemCardType>[
+            SubscribeItemCardType.edit,
+            SubscribeItemCardType.search,
+            SubscribeItemCardType.detail,
+            SubscribeItemCardType.files,
+            if (isPaused) SubscribeItemCardType.resume,
+            if (isRunning) SubscribeItemCardType.pause,
+            SubscribeItemCardType.reset,
+            if (isTv) SubscribeItemCardType.shared,
+            SubscribeItemCardType.delete,
+          ];
     return PopupMenuButton(
       onSelected: onMoreTap,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),

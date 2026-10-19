@@ -98,9 +98,21 @@ class SubtitleSearchController extends GetxController {
       if (useV3) query['media_source'] = identity.source;
       final requestMediaId = useV3 ? identity.id : mediaSearchKey;
 
-      final path =
-          '/api/v1/search/subtitle/media/$requestMediaId/stream'
-          '?${Uri(queryParameters: query).query}';
+      // 无媒体标识（纯标题关键词）时走标题模糊搜索端点（keyword 参数），
+      // 有标识时走媒体精确搜索端点（v2 前缀标识 / v3 media_source）。
+      final String path;
+      if (identity == null) {
+        final titleQuery = <String, String>{
+          'keyword': title.trim().isNotEmpty ? title.trim() : mediaSearchKey,
+          if (query['sites']?.isNotEmpty == true) 'sites': query['sites']!,
+        };
+        path =
+            '/api/v1/search/subtitle/title/stream?${Uri(queryParameters: titleQuery).query}';
+      } else {
+        path =
+            '/api/v1/search/subtitle/media/$requestMediaId/stream'
+            '?${Uri(queryParameters: query).query}';
+      }
 
       final stream = await _apiClient.streamLines(path, token: token);
       _subscription = stream.listen(
@@ -252,11 +264,9 @@ class SubtitleSearchController extends GetxController {
           ToastUtil.success(message.isEmpty ? '字幕下载任务已创建' : message);
           return true;
         }
-        final message = data is Map
-            ? (data['message']?.toString() ??
-                  data['detail']?.toString() ??
-                  '下载失败')
-            : '下载失败';
+        final message = data['message']?.toString() ??
+            data['detail']?.toString() ??
+            '下载失败';
         ToastUtil.error(message);
         return false;
       }

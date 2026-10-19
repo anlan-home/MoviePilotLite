@@ -6,7 +6,14 @@ import 'package:moviepilot_mobile/modules/plugin/models/plugin_models.dart';
 import 'package:moviepilot_mobile/modules/plugin/services/plugin_palette_cache.dart';
 import 'package:moviepilot_mobile/widgets/cached_image.dart';
 
-enum PluginHandleType { settings, reset, uninstall, log, web }
+enum PluginHandleType {
+  settings,
+  reset,
+  uninstall,
+  log,
+  web,
+  manage,
+}
 
 class PluginItemCard extends StatelessWidget {
   const PluginItemCard({
@@ -472,6 +479,8 @@ class PluginItemCard extends StatelessWidget {
         return '卸载';
       case PluginHandleType.web:
         return '作者主页';
+      case PluginHandleType.manage:
+        return '插件管理与分身';
     }
   }
 
@@ -487,6 +496,8 @@ class PluginItemCard extends StatelessWidget {
         return CupertinoIcons.delete;
       case PluginHandleType.web:
         return CupertinoIcons.compass;
+      case PluginHandleType.manage:
+        return CupertinoIcons.sparkles;
     }
   }
 
