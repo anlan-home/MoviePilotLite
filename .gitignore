@@ -66,6 +66,9 @@ node_modules/
 .zcode/
 .zcodeignore
 .claude/settings.local.json
+.mimosa/
+.v2c/
+.video_agent/
 
 # ── Android 本地与构建缓存 ──
 android/local.properties
