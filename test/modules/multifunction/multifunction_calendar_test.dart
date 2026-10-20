@@ -8,6 +8,7 @@ import 'package:moviepilot_mobile/modules/multifunction/debug/dashboard_calendar
 import 'package:moviepilot_mobile/modules/multifunction/controllers/multifunction_controller.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
+import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 
 class _FakeApiClient extends GetxService implements ApiClient {
   List<Map<String, dynamic>> subscribes = [];
@@ -20,6 +21,10 @@ class _FakeApiClient extends GetxService implements ApiClient {
 
   @override
   String? get token => 'test-token';
+
+  // 置空让 ServerApiVersionService.isV3() 直接返回 false，不触发网络探测
+  @override
+  String? get baseUrl => null;
 
   @override
   Future<Response<T>> get<T>(
@@ -104,6 +109,8 @@ void main() {
     Get.put<ApiClient>(api);
     Get.put<AppService>(app);
     Get.put<AppLog>(AppLog());
+    // 控制器构造函数 Get.find 该服务（音乐库入口判定）
+    Get.put<ServerApiVersionService>(ServerApiVersionService(apiClient: api));
     controller = MultifunctionController(
       now: () => DateTime(2026, 10, 16, 0, 30),
       debugCalendarMock: false,
