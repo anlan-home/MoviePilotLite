@@ -556,9 +556,9 @@ class _PosterCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: palette.shadow.withValues(alpha: 0.28),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+              color: palette.shadow.withValues(alpha: 0.14),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
             ),
           ],
         ),
