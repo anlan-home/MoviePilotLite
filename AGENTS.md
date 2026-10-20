@@ -1,11 +1,10 @@
 # Agent 公约
 
 ## 任务流转（issue ↔ PR 闭环）
-- 仓库远端固定为 singleton-altman/MoviePilotLite，gh 已可用；issue 与 PR 一律走 `gh`。
-- **任务发起时**：凡是正式开发任务（改代码、修 bug、加功能、重构），先建 issue（`gh issue create -R singleton-altman/MoviePilotLite`），标题概括任务，正文写任务要点与验收标准；把 issue 编号记入本次会话上下文。纯问答、配置微调、一次性探查不建 issue。
-- **任务完成、创建 PR 时**：PR 一律投 `dev` 分支（先查已有 PR 与 base 提交集）；PR 正文必须包含 `Closes #<issue编号>`，并在正文列出验证结果（测试/构建）。
-- PR 建成后：在对应 issue 下追加一条评论，附 PR 链接与完成情况摘要（做了什么、验证结论），再关闭 issue（若 PR 合并时 `Closes` 未生效）。任务中途放弃或改向时，也在 issue 里评论说明后再关。
-- 建 PR 前先跑已保存的「提交前验证」工作流（pre-commit-verify）；全量测试须绿。
+- 标准入口是 `/dev` 命令（.agents/commands/dev.md），覆盖「需求 → issue → 实现 → 验证 → PR → 关闭」全流程；不经命令发起的正式开发任务同样按该流程执行，本节是其中不可省略的不变量：
+- 正式开发任务（改代码、修 bug、加功能、重构）先建 issue（仓库固定 singleton-altman/MoviePilotLite），编号记入会话；纯问答、配置微调、一次性探查不建。
+- 创建 PR 前必跑已保存的「提交前验证」工作流（pre-commit-verify）：全量测试须绿，analyze 归因不得有落在本次改动上的 error 级问题。
+- PR 一律投 `dev`，正文含 `Closes #<issue编号>` 与验证结论；PR 建成后回评 issue。issue 默认随合并自动关闭，用户要求即时关闭时附收尾评论再关。
 
 ## Flutter 页面结构
 - 涉及 Flutter/Dart 页面、组件、布局、状态、路由、构建或分析的任务，默认优先使用 `/flutter skill`；除非用户明确指定其他 skill 或任务与 Flutter 无关。
