@@ -170,7 +170,7 @@ class MediaSearchListController extends GetxController {
         error.value = '没有找到匹配的媒体';
       }
       for (final item in parsed) {
-        _subscribeService.fetchAndSaveSubscribeStatus(
+        _subscribeService.prefetchSubscribeStatus(
           item.mediaKey,
           season: item.season,
           title: item.title,

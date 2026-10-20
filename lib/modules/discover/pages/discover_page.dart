@@ -18,6 +18,11 @@ class DiscoverPage extends GetView<DiscoverController> {
 
   final ScrollController? scrollController;
 
+  static const double _gridHPadding = 16;
+  static const double _gridCrossSpacing = 12;
+  static const double _gridMainSpacing = 18;
+  static const double _posterTextBlockHeight = 63;
+
   @override
   Widget build(BuildContext context) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -56,16 +61,19 @@ class DiscoverPage extends GetView<DiscoverController> {
                 Obx(() {
                   final top = MediaQuery.paddingOf(context).top;
                   return SliverPadding(
-                    padding: EdgeInsets.fromLTRB(16, top + 64, 16, 110),
-                    sliver: SliverList(
-                      delegate: SliverChildListDelegate([
-                        _buildSourceBar(context, palette),
-                        const SizedBox(height: 14),
-                        _buildBody(context, palette),
-                      ]),
+                    padding: EdgeInsets.fromLTRB(
+                      _gridHPadding,
+                      top + 56,
+                      _gridHPadding,
+                      0,
+                    ),
+                    sliver: SliverToBoxAdapter(
+                      child: _buildSourceBar(context, palette),
                     ),
                   );
                 }),
+                const SliverToBoxAdapter(child: SizedBox(height: 14)),
+                _buildContentSliver(context, palette),
               ],
             ),
           ],
@@ -161,56 +169,87 @@ class DiscoverPage extends GetView<DiscoverController> {
     );
   }
 
-  Widget _buildBody(BuildContext context, DashboardPaletteData palette) {
+  Widget _buildContentSliver(
+    BuildContext context,
+    DashboardPaletteData palette,
+  ) {
     final items = controller.currentItems();
     final isLoading = controller.isLoading();
     final errorText = controller.errorText();
+    final metrics = _gridMetrics(context);
 
     if (items.isEmpty && isLoading) {
-      return Column(
-        children: List.generate(5, (_) => const _DiscoverRowSkeleton()),
-      );
-    }
-    if (items.isEmpty) {
-      return _EmptyState(
-        message: errorText ?? '当前条件没有匹配作品',
-        onFilter: () => _openFilterSheet(context),
-      );
-    }
-
-    final hero = items.first;
-    final rest = items.length > 1 ? items.skip(1).toList() : const <RecommendApiItem>[];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _FeaturedCard(
-          item: hero,
-          source: controller.selectedSource.value,
-          onTap: () => _openDetail(hero),
+      return SliverPadding(
+        padding: const EdgeInsets.fromLTRB(
+          _gridHPadding,
+          0,
+          _gridHPadding,
+          110,
         ),
-        if (rest.isNotEmpty) ...[
-          const SizedBox(height: 18),
-          Text(
-            '更多推荐',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: palette.titleText,
-              fontWeight: FontWeight.w700,
-            ),
+        sliver: SliverGrid(
+          gridDelegate: metrics.delegate,
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => const _PosterGridSkeletonCell(),
+            childCount: metrics.columns * 4,
           ),
-          const SizedBox(height: 10),
-          for (var i = 0; i < rest.length; i++) ...[
-            if (i > 0) const SizedBox(height: 10),
-            _MediaRowCard(
+        ),
+      );
+    }
+
+    if (items.isEmpty) {
+      return SliverToBoxAdapter(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(
+            _gridHPadding,
+            8,
+            _gridHPadding,
+            110,
+          ),
+          child: _EmptyState(
+            message: errorText ?? '当前条件没有匹配作品',
+            onFilter: () => _openFilterSheet(context),
+          ),
+        ),
+      );
+    }
+
+    return SliverPadding(
+      padding: const EdgeInsets.fromLTRB(_gridHPadding, 0, _gridHPadding, 110),
+      sliver: SliverGrid(
+        gridDelegate: metrics.delegate,
+        delegate: SliverChildBuilderDelegate(
+          (context, index) {
+            final item = items[index];
+            return _PosterCard(
               key: ValueKey(
-                '${rest[i].media_id ?? rest[i].tmdb_id ?? rest[i].title}_$i',
+                '${item.media_id ?? item.tmdb_id ?? item.title}_$index',
               ),
-              item: rest[i],
-              onTap: () => _openDetail(rest[i]),
-            ),
-          ],
-        ],
-      ],
+              item: item,
+              onTap: () => _openDetail(item),
+            );
+          },
+          childCount: items.length,
+        ),
+      ),
+    );
+  }
+
+  _GridMetrics _gridMetrics(BuildContext context) {
+    final usableWidth =
+        MediaQuery.sizeOf(context).width - _gridHPadding * 2;
+    final columns = (usableWidth / 172).floor().clamp(2, 5);
+    final cardWidth =
+        (usableWidth - _gridCrossSpacing * (columns - 1)) / columns;
+    final cardHeight =
+        cardWidth * 1.5 + _posterTextBlockHeight;
+    return _GridMetrics(
+      columns: columns,
+      delegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: columns,
+        crossAxisSpacing: _gridCrossSpacing,
+        mainAxisSpacing: _gridMainSpacing,
+        childAspectRatio: cardWidth / cardHeight,
+      ),
     );
   }
 
@@ -276,162 +315,15 @@ class DiscoverPage extends GetView<DiscoverController> {
   }
 }
 
-class _FeaturedCard extends StatelessWidget {
-  const _FeaturedCard({
-    required this.item,
-    required this.source,
-    required this.onTap,
-  });
+class _GridMetrics {
+  const _GridMetrics({required this.columns, required this.delegate});
 
-  final RecommendApiItem item;
-  final DiscoverSourceEntry source;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = DashboardPalette.of(context);
-    final title = _bestTitle(item) ?? 'Untitled';
-    final imageUrl = _imageUrl(item, preferBackdrop: true);
-    final meta = _itemMeta(item);
-
-    return Semantics(
-      button: true,
-      label: '打开 $title',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(20),
-          child: Ink(
-            height: 220,
-            decoration: BoxDecoration(
-              color: palette.pageBackgroundAlt,
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: palette.tileBorder),
-            ),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(20),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  if (imageUrl.isNotEmpty)
-                    CachedImage(
-                      imageUrl: imageUrl,
-                      fit: BoxFit.cover,
-                      placeholder: const _SoftPlaceholder(),
-                      errorWidget: const _SoftPlaceholder(),
-                    )
-                  else
-                    const _SoftPlaceholder(),
-                  const DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0x22000000),
-                          Color(0x99000000),
-                          Color(0xE6000000),
-                        ],
-                        stops: [0.2, 0.55, 1],
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    left: 16,
-                    right: 16,
-                    bottom: 16,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Container(
-                              width: 22,
-                              height: 22,
-                              padding: const EdgeInsets.all(3),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.92),
-                                borderRadius: BorderRadius.circular(7),
-                              ),
-                              child: DiscoverSourceVisual.logoWidget(
-                                source,
-                                size: 14,
-                                fallbackColor: DiscoverSourceVisual.brandOf(
-                                  source,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              source.label,
-                              style: TextStyle(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            if (item.vote_average != null &&
-                                item.vote_average! > 0) ...[
-                              const Spacer(),
-                              Icon(
-                                Icons.star_rounded,
-                                size: 15,
-                                color: Colors.amber.shade400,
-                              ),
-                              const SizedBox(width: 3),
-                              Text(
-                                item.vote_average!.toStringAsFixed(1),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleLarge
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                                letterSpacing: -0.4,
-                                height: 1.15,
-                              ),
-                        ),
-                        if (meta.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            meta,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white.withValues(alpha: 0.72),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  final int columns;
+  final SliverGridDelegate delegate;
 }
 
-class _MediaRowCard extends StatelessWidget {
-  const _MediaRowCard({
+class _PosterCard extends StatefulWidget {
+  const _PosterCard({
     super.key,
     required this.item,
     required this.onTap,
@@ -441,100 +333,193 @@ class _MediaRowCard extends StatelessWidget {
   final VoidCallback onTap;
 
   @override
+  State<_PosterCard> createState() => _PosterCardState();
+}
+
+class _PosterCardState extends State<_PosterCard> {
+  static const Color _ratingGoldDark = Color(0xFFFFAC2D);
+  static const Color _ratingGoldLight = Color(0xFFD97706);
+
+  bool _pressed = false;
+
+  @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final palette = DashboardPalette.of(context);
-    final title = _bestTitle(item) ?? 'Untitled';
-    final image = _imageUrl(item);
-    final meta = _itemMeta(item);
-    final overview = item.overview?.trim() ?? '';
+    final title = _bestTitle(widget.item) ?? 'Untitled';
+    final posterUrl = _posterUrl(widget.item);
+    final vote = widget.item.vote_average;
+    final hasVote = vote != null && vote > 0;
+    final year = widget.item.year?.trim() ?? widget.item.title_year?.trim() ?? '';
+    final ratingColor = palette.isDark ? _ratingGoldDark : _ratingGoldLight;
 
     return Semantics(
       button: true,
       label: '打开 $title',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(16),
-          child: Ink(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: palette.pageBackgroundAlt,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: palette.tileBorder),
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(
-                    width: 78,
-                    height: 112,
-                    child: image.isEmpty
-                        ? const _SoftPlaceholder()
-                        : CachedImage(
-                            imageUrl: image,
-                            fit: BoxFit.cover,
-                            placeholder: const _SoftPlaceholder(),
-                            errorWidget: const _SoftPlaceholder(),
-                          ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) {
+          if (_pressed) return;
+          setState(() => _pressed = true);
+        },
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          scale: _pressed ? 0.965 : 1,
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: palette.tileBorder.withValues(alpha: 0.55),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: SizedBox(
-                    height: 112,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            color: palette.titleText,
-                            fontWeight: FontWeight.w700,
-                            height: 1.25,
-                          ),
-                        ),
-                        if (meta.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            meta,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: palette.primary,
-                              fontWeight: FontWeight.w600,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(11),
+                    child: ColoredBox(
+                      color: palette.surfaceAlt,
+                      child: posterUrl.isEmpty
+                          ? const _SoftPlaceholder()
+                          : CachedImage(
+                              imageUrl: posterUrl,
+                              fit: BoxFit.cover,
+                              placeholder: const _SoftPlaceholder(),
+                              errorWidget: const _SoftPlaceholder(),
                             ),
-                          ),
-                        ],
-                        if (overview.isNotEmpty) ...[
-                          const SizedBox(height: 6),
-                          Expanded(
-                            child: Text(
-                              overview,
-                              maxLines: 3,
-                              overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: palette.mutedText,
-                                height: 1.35,
-                              ),
-                            ),
-                          ),
-                        ] else
-                          const Spacer(),
-                      ],
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 34,
+                width: double.infinity,
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: palette.titleText,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.28,
+                    letterSpacing: -0.1,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 5),
+              SizedBox(
+                height: 16,
+                child: Row(
+                  children: [
+                    if (hasVote) ...[
+                      Icon(Icons.star_rounded, size: 14, color: ratingColor),
+                      const SizedBox(width: 2),
+                      Text(
+                        vote.toStringAsFixed(1),
+                        style: TextStyle(
+                          color: ratingColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ] else
+                      Text(
+                        '暂无评分',
+                        style: TextStyle(
+                          color: palette.faintText,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    const Spacer(),
+                    if (year.isNotEmpty)
+                      Flexible(
+                        child: Text(
+                          year,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: palette.mutedText,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),
+    );
+  }
+
+  String _posterUrl(RecommendApiItem item) {
+    final raw = item.poster_path ?? item.backdrop_path ?? '';
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    return ImageUtil.convertCacheImageUrl(trimmed);
+  }
+}
+
+class _PosterGridSkeletonCell extends StatelessWidget {
+  const _PosterGridSkeletonCell();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = DashboardPalette.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: palette.surfaceAlt,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const SizedBox.expand(),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Container(
+          height: 12,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: palette.surfaceAlt,
+            borderRadius: BorderRadius.circular(6),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                height: 10,
+                decoration: BoxDecoration(
+                  color: palette.surfaceAlt,
+                  borderRadius: BorderRadius.circular(5),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Container(
+              width: 28,
+              height: 10,
+              decoration: BoxDecoration(
+                color: palette.surfaceAlt,
+                borderRadius: BorderRadius.circular(5),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -550,15 +535,15 @@ class _EmptyState extends StatelessWidget {
     final palette = DashboardPalette.of(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 36),
       decoration: BoxDecoration(
         color: palette.pageBackgroundAlt,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: palette.tileBorder),
       ),
       child: Column(
         children: [
-          Icon(Icons.explore_outlined, size: 36, color: palette.faintText),
+          Icon(Icons.explore_outlined, size: 34, color: palette.faintText),
           const SizedBox(height: 14),
           Text(
             '暂无内容',
@@ -589,98 +574,20 @@ class _EmptyState extends StatelessWidget {
   }
 }
 
-class _DiscoverRowSkeleton extends StatelessWidget {
-  const _DiscoverRowSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = DashboardPalette.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Container(
-        height: 132,
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: palette.pageBackgroundAlt,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: palette.tileBorder),
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 78,
-              height: 112,
-              decoration: BoxDecoration(
-                color: palette.surfaceAlt,
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    height: 16,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: palette.surfaceAlt,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Container(
-                    height: 12,
-                    width: 120,
-                    decoration: BoxDecoration(
-                      color: palette.surfaceAlt,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: palette.surfaceAlt,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _SoftPlaceholder extends StatelessWidget {
   const _SoftPlaceholder();
 
   @override
   Widget build(BuildContext context) {
-    return ColoredBox(
-      color: DashboardPalette.of(context).surfaceAlt,
-      child: Center(
-        child: Icon(
-          Icons.movie_outlined,
-          color: DashboardPalette.of(context).faintText,
-        ),
+    final palette = DashboardPalette.of(context);
+    return Center(
+      child: Icon(
+        Icons.movie_outlined,
+        size: 30,
+        color: palette.faintText.withValues(alpha: 0.7),
       ),
     );
   }
-}
-
-String _imageUrl(RecommendApiItem? item, {bool preferBackdrop = false}) {
-  if (item == null) return '';
-  final raw = preferBackdrop
-      ? item.backdrop_path ?? item.poster_path ?? ''
-      : item.poster_path ?? item.backdrop_path ?? '';
-  final trimmed = raw.trim();
-  if (trimmed.isEmpty) return '';
-  return ImageUtil.convertCacheImageUrl(trimmed);
 }
 
 String? _bestTitle(RecommendApiItem item) {
@@ -691,15 +598,4 @@ String? _bestTitle(RecommendApiItem item) {
   final original = item.original_title ?? item.original_name;
   if (original != null && original.trim().isNotEmpty) return original.trim();
   return null;
-}
-
-String _itemMeta(RecommendApiItem item) {
-  final year = item.year?.trim() ?? item.title_year?.trim() ?? '';
-  final type = item.type?.trim() ?? '';
-  final vote = item.vote_average;
-  return [
-    if (year.isNotEmpty) year,
-    if (type.isNotEmpty) type,
-    if (vote != null && vote > 0) vote.toStringAsFixed(1),
-  ].join(' · ');
 }

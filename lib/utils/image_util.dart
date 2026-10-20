@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/settings/models/system_env_model.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/utils/image_request_headers.dart';
 import 'package:moviepilot_mobile/utils/prefs_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,8 +81,11 @@ class ImageUtil extends GetxService {
     if (kIsWeb) {
       return imageUrl;
     }
-    // 已经是缓存代理地址：直接返回，避免重复包一层代理。
-    if (imageUrl.contains('/api/v1/system/cache/image')) return imageUrl;
+    // 已经是 MoviePilot 图片代理地址（system/img/0、system/img/1、cache/image）：
+    // 直接返回。二次包裹会丢掉 imgurl 上的 use_cookies（如飞牛等需要
+    // Cookies 的媒体服务器），且外层 cache/image 只按 SECURITY_IMAGE_DOMAINS
+    // 校验、不含媒体服务器地址，必然被服务端拦截成 404。
+    if (isMoviePilotResourceProxyImageUrl(imageUrl)) return imageUrl;
 
     final imageUtil = Get.find<ImageUtil>();
     final globalCachedEnabled = imageUtil.globalCachedEnabled.value;

@@ -114,14 +114,9 @@ class CpuWidget extends StatelessWidget {
               height: 30,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
+                child: DashboardValueText(
                   '${cpuUsage.toStringAsFixed(0)}%',
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: palette.titleText,
-                    height: 1,
-                  ),
+                  fontSize: 24,
                 ),
               ),
             ),

@@ -136,13 +136,9 @@ class MemoryWidget extends StatelessWidget {
                     ),
                   ),
                 ),
-                Text(
+                DashboardPercentPill(
                   '${memoryUsage.toStringAsFixed(0)}%',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: palette.mutedText,
-                  ),
+                  color: palette.coolAccent,
                 ),
               ],
             ),
@@ -151,14 +147,9 @@ class MemoryWidget extends StatelessWidget {
               height: 30,
               child: Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
+                child: DashboardValueText(
                   SizeFormatter.formatSize(memoryUsed.toDouble(), 1),
-                  style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: palette.titleText,
-                    height: 1,
-                  ),
+                  fontSize: 24,
                 ),
               ),
             ),

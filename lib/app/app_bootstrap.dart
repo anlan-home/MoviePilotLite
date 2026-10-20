@@ -11,6 +11,7 @@ import 'package:moviepilot_mobile/services/ios_widget_navigation_service.dart';
 import 'package:moviepilot_mobile/services/jpush_service.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/hive_service.dart';
+import 'package:moviepilot_mobile/utils/frame_jank_reporter.dart';
 import 'package:moviepilot_mobile/utils/image_cache_manager.dart';
 import 'package:moviepilot_mobile/utils/image_util.dart';
 
@@ -77,9 +78,9 @@ Future<void> bootstrapApp() async {
   registerBrushFlowRenderer();
 }
 
-/// 首帧之后执行的初始化：推送 SDK 注册、APK 更新缓存清理
-/// 首帧之后执行的初始化：推送 SDK 注册、APK 更新缓存清理
+/// 首帧之后执行的初始化：慢帧诊断、推送 SDK 注册、APK 更新缓存清理
 Future<void> postLaunchInit() async {
+  FrameJankReporter.install();
   try {
     if (Get.isRegistered<JPushService>()) {
       await Get.find<JPushService>().init();

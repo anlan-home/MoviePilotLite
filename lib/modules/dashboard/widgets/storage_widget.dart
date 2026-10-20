@@ -92,13 +92,13 @@ class StorageWidget extends StatelessWidget {
         value: _formatStorageSize(totalStorage),
         icon: Icons.storage_rounded,
         accentColor: palette.primary,
-        trailing: Text(
+        trailing: DashboardPercentPill(
           '${(progress * 100).toStringAsFixed(0)}%',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-            color: palette.mutedText,
-          ),
+          color: palette.primary,
+        ),
+        valueWidget: DashboardValueText(
+          _formatStorageSize(totalStorage),
+          fontSize: 29,
         ),
         subtitle: '已用 ${_formatStorageSize(usedStorage)}',
       );
