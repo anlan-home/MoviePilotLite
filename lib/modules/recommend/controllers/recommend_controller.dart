@@ -253,6 +253,7 @@ class RecommendController extends GetxController {
     ever(selectedCategory, (_) {
       if (!_appService.canDiscovery) return;
       prefetchAllVisibleCategories(forceRefresh: true);
+      _prefetchSubscribeStatusesForCurrentCategory();
     });
   }
 
@@ -614,11 +615,12 @@ class RecommendController extends GetxController {
 
       itemsByKey[key] = items;
       itemsByKey.refresh();
-      _trimInactiveDecodedImages();
       _lastFetchAt[key] = DateTime.now();
       unawaited(Get.find<SearchKeywordHintsService>().ingestFromItems(items));
-      for (final item in items) {
-        _fetchItemsSubscribeStatus(item);
+      // 订阅状态只为当前展示的分类预取；其余分类等切换过去再补，
+      // 避免启动时为所有榜单的每一条都打一个请求。
+      if (currentSubCategories.contains(subCategory)) {
+        _prefetchSubscribeStatuses(items);
       }
     } catch (e, st) {
       _log.handle(e, stackTrace: st, message: '推荐数据请求异常');
@@ -710,11 +712,20 @@ class RecommendController extends GetxController {
     return null;
   }
 
-  _fetchItemsSubscribeStatus(RecommendApiItem item) {
-    subscribeService.fetchAndSaveSubscribeStatus(
-      item.mediaKey,
-      season: item.season,
-      title: item.title,
-    );
+  void _prefetchSubscribeStatuses(Iterable<RecommendApiItem> items) {
+    for (final item in items) {
+      subscribeService.prefetchSubscribeStatus(
+        item.mediaKey,
+        season: item.season,
+        title: item.title,
+      );
+    }
+  }
+
+  /// 为当前分类下已加载的榜单补齐订阅状态；已有新鲜结果的 key 会被服务层跳过
+  void _prefetchSubscribeStatusesForCurrentCategory() {
+    for (final subCategory in currentSubCategories) {
+      _prefetchSubscribeStatuses(itemsForSubCategory(subCategory));
+    }
   }
 }

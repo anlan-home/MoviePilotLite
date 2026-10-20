@@ -433,7 +433,6 @@ class DiscoverController extends GetxController {
       ensureUserCookieRefreshed();
       itemsByKey[key] = items;
       itemsByKey.refresh();
-      _trimInactiveDecodedImages();
       _lastFetchAt[key] = DateTime.now();
       unawaited(Get.find<SearchKeywordHintsService>().ingestFromItems(items));
     } catch (e, st) {

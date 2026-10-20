@@ -157,10 +157,8 @@ class RecommendCategoryListController extends GetxController {
 
       if (append) {
         items.addAll(parsed);
-        _trimInactiveDecodedImages();
       } else {
         items.assignAll(parsed);
-        _trimInactiveDecodedImages();
       }
       currentPage.value = page;
       _updatePagination(payload, page, parsed.length, append);
@@ -291,9 +289,5 @@ class RecommendCategoryListController extends GetxController {
     if (previousBytes != null) {
       cache.maximumSizeBytes = previousBytes;
     }
-  }
-
-  void _trimInactiveDecodedImages() {
-    PaintingBinding.instance.imageCache.clear();
   }
 }
