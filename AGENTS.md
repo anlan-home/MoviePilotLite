@@ -1,5 +1,12 @@
 # Agent 公约
 
+## 任务流转（issue ↔ PR 闭环）
+- 仓库远端固定为 singleton-altman/MoviePilotLite，gh 已可用；issue 与 PR 一律走 `gh`。
+- **任务发起时**：凡是正式开发任务（改代码、修 bug、加功能、重构），先建 issue（`gh issue create -R singleton-altman/MoviePilotLite`），标题概括任务，正文写任务要点与验收标准；把 issue 编号记入本次会话上下文。纯问答、配置微调、一次性探查不建 issue。
+- **任务完成、创建 PR 时**：PR 一律投 `dev` 分支（先查已有 PR 与 base 提交集）；PR 正文必须包含 `Closes #<issue编号>`，并在正文列出验证结果（测试/构建）。
+- PR 建成后：在对应 issue 下追加一条评论，附 PR 链接与完成情况摘要（做了什么、验证结论），再关闭 issue（若 PR 合并时 `Closes` 未生效）。任务中途放弃或改向时，也在 issue 里评论说明后再关。
+- 建 PR 前先跑已保存的「提交前验证」工作流（pre-commit-verify）；全量测试须绿。
+
 ## Flutter 页面结构
 - 涉及 Flutter/Dart 页面、组件、布局、状态、路由、构建或分析的任务，默认优先使用 `/flutter skill`；除非用户明确指定其他 skill 或任务与 Flutter 无关。
 - 页面根布局使用 `Scaffold`，顶栏使用 `appBar`（默认 `AppBar`；若需 iOS 导航栏外观，可将 `CupertinoNavigationBar` 等实现 `PreferredSizeWidget` 的组件赋给 `appBar`），主内容一律放在 `body`。
