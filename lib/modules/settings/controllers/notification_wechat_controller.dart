@@ -10,6 +10,13 @@ import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 
 typedef WechatActionResult = ({bool ok, String message});
 
+/// 统一信封业务失败；serverMessage 取服务端信封里可展示的提示文案。
+class _EnvelopeFailure implements Exception {
+  _EnvelopeFailure(this.serverMessage);
+
+  final String? serverMessage;
+}
+
 /// V2's dedicated endpoints and V3.1.5's NotificationAction contract.
 class NotificationWechatController extends GetxController {
   NotificationWechatController({
@@ -146,10 +153,12 @@ class NotificationWechatController extends GetxController {
       if (!authorized || generation != _generation) return;
       _check(response);
       _applyStatus(_payload(response.data));
-    } catch (_) {
+    } catch (error) {
       if (!_closed && generation == _generation) {
         // Never log exceptions: Dio errors may contain QR URLs or credentials.
-        errorText.value = '获取登录状态失败，请重试';
+        final serverMessage =
+            error is _EnvelopeFailure ? error.serverMessage : null;
+        errorText.value = serverMessage ?? '获取登录状态失败，请重试';
         status.value = null;
         _pollDeadline = null;
       }
@@ -266,8 +275,20 @@ class NotificationWechatController extends GetxController {
         body is! Map ||
         body['success'] != true ||
         (body['data'] is Map && body['data']['success'] == false)) {
-      throw const FormatException('Request failed');
+      throw _EnvelopeFailure(_serverMessage(body));
     }
+  }
+
+  /// 只采纳统一信封里字符串形态的 message 用于展示；
+  /// 其余响应原文可能回显二维码或凭据，一律丢弃。
+  String? _serverMessage(dynamic body) {
+    if (body is! Map) return null;
+    final message = body['message'];
+    if (message is String) {
+      final trimmed = message.trim();
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
   }
 
   Future<WechatActionResult> _action(
@@ -301,9 +322,15 @@ class NotificationWechatController extends GetxController {
         }
       }
       return (ok: true, message: '$label成功');
-    } catch (_) {
+    } catch (error) {
       // No raw business response/exception is exposed: it may echo secrets.
-      return (ok: false, message: '$label失败，请检查渠道配置或稍后重试');
+      // 仅透出统一信封 message（v3 manage 失败提示），其余一律给通用文案。
+      final serverMessage =
+          error is _EnvelopeFailure ? error.serverMessage : null;
+      return (
+        ok: false,
+        message: serverMessage ?? '$label失败，请检查渠道配置或稍后重试',
+      );
     } finally {
       if (!_closed) {
         isOperating.value = false;
