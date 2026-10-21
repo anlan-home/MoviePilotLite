@@ -761,6 +761,10 @@ class SubscribePage extends GetView<SubscribeController> {
       case SubscribeItemCardType.files:
         _openFiles(context, item);
         break;
+      case SubscribeItemCardType.activity:
+      case SubscribeItemCardType.logs:
+        _openExecutionPage(type, item);
+        break;
       case SubscribeItemCardType.pause:
         _pauseSubscribe(context, item);
         break;
@@ -802,6 +806,7 @@ class SubscribePage extends GetView<SubscribeController> {
       isTv: controller.isTv,
       isMusic: isMusic,
       layout: layout,
+      showExecutionEntries: controller.executionEntriesVisible.value,
       onTap: () => isMusic
           ? showSubscribeMusicSheet(context, item)
           : _openFiles(context, item),
@@ -1153,6 +1158,22 @@ class SubscribePage extends GetView<SubscribeController> {
 
   void _openFiles(BuildContext context, SubscribeItem item) {
     showSubscribeFilesSheet(context, item);
+  }
+
+  /// 打开 v3 订阅执行可观测页（活动记录/运行日志）
+  void _openExecutionPage(SubscribeItemCardType type, SubscribeItem item) {
+    if (item.id == null || item.id! <= 0) {
+      ToastUtil.info('无效的订阅');
+      return;
+    }
+    final name = (item.name ?? '').trim();
+    final route = type == SubscribeItemCardType.activity
+        ? '/subscribe-activity'
+        : '/subscribe-logs';
+    Get.toNamed(
+      route,
+      arguments: {'id': item.id, 'title': name},
+    );
   }
 
   Widget _buildRecommendationHeader(BuildContext context) {

@@ -12,6 +12,8 @@ enum SubscribeItemCardType {
   search,
   detail,
   files,
+  activity,
+  logs,
   pause,
   resume,
   reset,
@@ -28,6 +30,7 @@ class SubscribeItemCard extends StatelessWidget {
     required this.isTv,
     this.isMusic = false,
     this.layout = SubscribeItemCardLayout.list,
+    this.showExecutionEntries = false,
     this.onTap,
     this.onMoreTap,
   });
@@ -36,8 +39,44 @@ class SubscribeItemCard extends StatelessWidget {
   final bool isTv;
   final bool isMusic;
   final SubscribeItemCardLayout layout;
+
+  /// v3 执行可观测入口（活动记录/运行日志）；v2 服务端隐藏
+  final bool showExecutionEntries;
   final VoidCallback? onTap;
   final Function(SubscribeItemCardType type)? onMoreTap;
+
+  /// 卡片「更多」菜单项集合；执行可观测入口仅在 v3 且非音乐订阅时出现
+  static List<SubscribeItemCardType> menuItemsFor({
+    required bool isMusic,
+    required bool isTv,
+    required bool executionVisible,
+    required bool paused,
+    required bool running,
+  }) {
+    if (isMusic) {
+      return <SubscribeItemCardType>[
+        SubscribeItemCardType.search,
+        if (paused) SubscribeItemCardType.resume,
+        if (running) SubscribeItemCardType.pause,
+        SubscribeItemCardType.delete,
+      ];
+    }
+    return <SubscribeItemCardType>[
+      SubscribeItemCardType.edit,
+      SubscribeItemCardType.search,
+      SubscribeItemCardType.detail,
+      SubscribeItemCardType.files,
+      if (executionVisible) ...[
+        SubscribeItemCardType.activity,
+        SubscribeItemCardType.logs,
+      ],
+      if (paused) SubscribeItemCardType.resume,
+      if (running) SubscribeItemCardType.pause,
+      SubscribeItemCardType.reset,
+      if (isTv) SubscribeItemCardType.shared,
+      SubscribeItemCardType.delete,
+    ];
+  }
 
   static const double _cardRadius = 22;
   static const double _gridCardRadius = 16;
@@ -573,24 +612,13 @@ class SubscribeItemCard extends StatelessWidget {
     final isPaused = item.state?.toUpperCase() == 'S';
     final isRunning = item.state?.toUpperCase() == 'R';
     final size = compact ? 34.0 : 30.0;
-    final items = isMusic
-        ? <SubscribeItemCardType>[
-            SubscribeItemCardType.search,
-            if (isPaused) SubscribeItemCardType.resume,
-            if (isRunning) SubscribeItemCardType.pause,
-            SubscribeItemCardType.delete,
-          ]
-        : <SubscribeItemCardType>[
-            SubscribeItemCardType.edit,
-            SubscribeItemCardType.search,
-            SubscribeItemCardType.detail,
-            SubscribeItemCardType.files,
-            if (isPaused) SubscribeItemCardType.resume,
-            if (isRunning) SubscribeItemCardType.pause,
-            SubscribeItemCardType.reset,
-            if (isTv) SubscribeItemCardType.shared,
-            SubscribeItemCardType.delete,
-          ];
+    final items = menuItemsFor(
+      isMusic: isMusic,
+      isTv: isTv,
+      executionVisible: showExecutionEntries,
+      paused: isPaused,
+      running: isRunning,
+    );
     return PopupMenuButton(
       onSelected: onMoreTap,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -641,6 +669,10 @@ class SubscribeItemCard extends StatelessWidget {
         return Icons.info;
       case SubscribeItemCardType.files:
         return Icons.folder_open;
+      case SubscribeItemCardType.activity:
+        return CupertinoIcons.clock;
+      case SubscribeItemCardType.logs:
+        return CupertinoIcons.doc_text;
       case SubscribeItemCardType.pause:
         return Icons.pause;
       case SubscribeItemCardType.resume:
@@ -664,6 +696,10 @@ class SubscribeItemCard extends StatelessWidget {
         return '详情';
       case SubscribeItemCardType.files:
         return '文件统计';
+      case SubscribeItemCardType.activity:
+        return '活动记录';
+      case SubscribeItemCardType.logs:
+        return '运行日志';
       case SubscribeItemCardType.pause:
         return '暂停';
       case SubscribeItemCardType.resume:
@@ -687,6 +723,10 @@ class SubscribeItemCard extends StatelessWidget {
         return Colors.green;
       case SubscribeItemCardType.files:
         return const Color(0xFF64D2FF);
+      case SubscribeItemCardType.activity:
+        return const Color(0xFF30B0C7);
+      case SubscribeItemCardType.logs:
+        return const Color(0xFFBF5AF2);
       case SubscribeItemCardType.pause:
         return Colors.orange;
       case SubscribeItemCardType.resume:
