@@ -379,6 +379,7 @@ class ApiClient extends g.GetxController {
     String path,
     Map<String, dynamic> data, {
     int? timeout,
+    bool skipUnauthorizedHandling = false,
   }) async {
     await _ensureReady();
     final formData = FormData.fromMap(data);
@@ -388,11 +389,21 @@ class ApiClient extends g.GetxController {
       options: kIsWeb
           ? Options(
               receiveTimeout: Duration(seconds: timeout ?? 30),
+              extra: {
+                if (skipUnauthorizedHandling) 'skipUnauthorizedHandling': true,
+              },
               validateStatus: (_) => true,
             )
-          : Options(receiveTimeout: Duration(seconds: timeout ?? 30)),
+          : Options(
+              receiveTimeout: Duration(seconds: timeout ?? 30),
+              extra: {
+                if (skipUnauthorizedHandling) 'skipUnauthorizedHandling': true,
+              },
+            ),
     );
-    _handleUnauthorized(response.statusCode);
+    if (!skipUnauthorizedHandling) {
+      _handleUnauthorized(response.statusCode);
+    }
     return response;
   }
 
