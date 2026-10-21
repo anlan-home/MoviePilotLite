@@ -70,6 +70,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final canSearch = Get.find<AppService>().canSearch;
     return SliverAppBar(
       pinned: true,
       stretch: true,
@@ -83,26 +84,27 @@ class SearchIndexPage extends GetView<SearchIndexController> {
       ),
       automaticallyImplyLeading: false,
       actions: [
-        TextButton.icon(
-          onPressed: () => Get.toNamed('/search-result'),
-          icon: Icon(
-            Icons.history_rounded,
-            size: 18,
-            color: colorScheme.onSurface.withValues(alpha: 0.86),
-          ),
-          label: Text(
-            '近期搜索',
-            style: theme.textTheme.labelLarge?.copyWith(
+        if (canSearch)
+          TextButton.icon(
+            onPressed: () => Get.toNamed('/search-result'),
+            icon: Icon(
+              Icons.history_rounded,
+              size: 18,
               color: colorScheme.onSurface.withValues(alpha: 0.86),
-              fontWeight: FontWeight.w600,
+            ),
+            label: Text(
+              '近期搜索',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: colorScheme.onSurface.withValues(alpha: 0.86),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-        ),
         const SizedBox(width: 4),
       ],
       flexibleSpace: FlexibleSpaceBar(
@@ -326,13 +328,24 @@ class SearchIndexPage extends GetView<SearchIndexController> {
   }
 
   List<Widget> _buildIdleContent(BuildContext context) {
+    final canDiscovery = Get.find<AppService>().canDiscovery;
+    // 音乐库入口只挂在「浏览」宫格末尾，且不依赖发现权限，
+    // 所以无发现权限时宫格仍要保留给音乐卡。
+    final showBrowse = canDiscovery || controller.musicBrowseSupported.value;
     return [
-      _idleSectionTitle(context, '为你推荐'),
-      _buildRecommendMediaPager(context),
-      const SizedBox(height: 18),
-      _idleSectionTitle(context, '浏览'),
-      _buildBrowseCategoriesGrid(context),
-      const SizedBox(height: 18),
+      if (canDiscovery) ...[
+        _idleSectionTitle(context, '为你推荐'),
+        _buildRecommendMediaPager(context),
+        const SizedBox(height: 18),
+      ],
+      if (showBrowse) ...[
+        _idleSectionTitle(context, '浏览'),
+        _buildBrowseCategoriesGrid(
+          context,
+          includeRecommendCategories: canDiscovery,
+        ),
+        const SizedBox(height: 18),
+      ],
     ];
   }
 
@@ -506,11 +519,17 @@ class SearchIndexPage extends GetView<SearchIndexController> {
     );
   }
 
-  Widget _buildBrowseCategoriesGrid(BuildContext context) {
-    final rec = Get.find<RecommendController>();
+  Widget _buildBrowseCategoriesGrid(
+    BuildContext context, {
+    required bool includeRecommendCategories,
+  }) {
+    // 无发现权限时不触碰 RecommendController，避免为不可访问的内容发起加载。
+    final rec = includeRecommendCategories
+        ? Get.find<RecommendController>()
+        : null;
     controller.ensureMusicBrowseLoaded();
     return Obx(() {
-      final categories = rec.allVisibleSubCategories;
+      final categories = rec?.allVisibleSubCategories ?? const <String>[];
       final showMusic = controller.musicBrowseSupported.value;
       if (categories.isEmpty && !showMusic) return const SizedBox.shrink();
       final musicItems = controller.musicExploreItems.take(2).toList();
@@ -547,8 +566,10 @@ class SearchIndexPage extends GetView<SearchIndexController> {
                     return _MusicBrowseCard(items: musicItems);
                   }
                   final name = categories[index];
-                  final key = rec.keyForSubCategory(name);
-                  final items = rec.itemsForSubCategory(name).take(3).toList();
+                  final recommend = rec!;
+                  final key = recommend.keyForSubCategory(name);
+                  final items =
+                      recommend.itemsForSubCategory(name).take(3).toList();
                   return RecommendCategoryItemCard(
                     name: name,
                     items: items,
