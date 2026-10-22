@@ -116,8 +116,13 @@ class CachedImage extends StatelessWidget {
       errorWidget: (context, url, error) {
         return errorWidget ?? _buildDefaultErrorWidget(error);
       },
-      progressIndicatorBuilder: (context, url, progress) =>
-          placeholder ?? _buildProgressIndicator(progress),
+      // 用静态 placeholder 而非 progressIndicatorBuilder：后者会让 octo_image
+      // 挂上 loadingBuilder，每收到一个字节块就重建一次占位子树；海报网格里
+      // 同时下载十几张时这是可观的无效重建。静态路径还能让同步命中的缓存图
+      // 直接出图、完全不经过占位。
+      placeholder: (context, url) =>
+          placeholder ?? _buildLoadingPlaceholder(),
+      placeholderFadeInDuration: const Duration(milliseconds: 120),
       httpHeaders: headers,
     );
 
@@ -171,19 +176,9 @@ class CachedImage extends StatelessWidget {
     unawaited(manager.removeFile(cacheKey).catchError((_) {}));
   }
 
-  /// 构建进度指示器
-  Widget _buildProgressIndicator(dynamic progress) {
-    double? progressValue;
-    if (progress is DownloadProgress) {
-      progressValue = progress.progress;
-    } else if (progress is double) {
-      progressValue = progress;
-    }
-    return _ImageStateSurface(
-      width: width,
-      height: height,
-      progress: progressValue,
-    );
+  /// 构建默认加载占位。
+  Widget _buildLoadingPlaceholder() {
+    return _ImageStateSurface(width: width, height: height);
   }
 
   /// 构建默认错误占位符
@@ -231,42 +226,119 @@ bool shouldEvictImageOnError(Object error) {
 }
 
 class _ImageStateSurface extends StatelessWidget {
-  const _ImageStateSurface({
-    this.width,
-    this.height,
-    this.progress,
-    this.isError = false,
-  });
+  const _ImageStateSurface({this.width, this.height, this.isError = false});
 
   final double? width;
   final double? height;
-  final double? progress;
   final bool isError;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return SizedBox(
+    final baseColor = theme.colorScheme.surfaceContainerHighest;
+    if (isError) {
+      return SizedBox(
+        width: width,
+        height: height,
+        child: ColoredBox(
+          color: baseColor,
+          child: Center(
+            child: Icon(
+              CupertinoIcons.photo,
+              color: theme.colorScheme.onSurfaceVariant,
+              size: 28,
+            ),
+          ),
+        ),
+      );
+    }
+    return _ImageShimmerSurface(
       width: width,
       height: height,
-      child: ColoredBox(
-        color: theme.colorScheme.surfaceContainerHighest,
-        child: Center(
-          child: isError
-              ? Icon(
-                  CupertinoIcons.photo,
-                  color: theme.colorScheme.onSurfaceVariant,
-                  size: 28,
-                )
-              : SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    value: progress,
-                    strokeWidth: 2,
-                    color: theme.colorScheme.primary,
-                  ),
+      baseColor: baseColor,
+      highlightColor: theme.colorScheme.surfaceContainerLow,
+    );
+  }
+}
+
+/// 加载态微光表面。
+///
+/// 相比转圈进度条，占位本身不暗示「等待」而只是「还没到」，图片淡入时
+/// 观感更接近内容逐步显现。进度条也不再随下载字节数重建。
+class _ImageShimmerSurface extends StatefulWidget {
+  const _ImageShimmerSurface({
+    this.width,
+    this.height,
+    required this.baseColor,
+    required this.highlightColor,
+  });
+
+  final double? width;
+  final double? height;
+  final Color baseColor;
+  final Color highlightColor;
+
+  @override
+  State<_ImageShimmerSurface> createState() => _ImageShimmerSurfaceState();
+}
+
+class _ImageShimmerSurfaceState extends State<_ImageShimmerSurface>
+    with SingleTickerProviderStateMixin {
+  static const Duration _period = Duration(milliseconds: 1400);
+
+  late final AnimationController _controller = AnimationController(
+    vsync: this,
+    duration: _period,
+  );
+
+  bool _animating = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final shouldAnimate = !MediaQuery.disableAnimationsOf(context);
+    if (shouldAnimate == _animating) return;
+    _animating = shouldAnimate;
+    if (shouldAnimate) {
+      _controller.repeat();
+    } else {
+      _controller.stop();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: widget.width,
+      height: widget.height,
+      child: RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            final t = _controller.value;
+            // 光带从左侧滑到右侧，两侧留出余量避免边缘生硬出现。
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment(-1.6 + t * 3.2, 0),
+                  end: Alignment(-0.6 + t * 3.2, 0),
+                  colors: [
+                    widget.baseColor,
+                    widget.highlightColor,
+                    widget.baseColor,
+                  ],
+                  stops: const [0.25, 0.5, 0.75],
                 ),
+              ),
+              child: const SizedBox.expand(),
+            );
+          },
         ),
       ),
     );
