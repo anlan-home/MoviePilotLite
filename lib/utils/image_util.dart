@@ -6,6 +6,16 @@ import 'package:moviepilot_mobile/utils/image_request_headers.dart';
 import 'package:moviepilot_mobile/utils/prefs_keys.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// 音乐元数据的图片固定托管在境外源站，客户端直连在境内网络基本不可达，
+/// 与豆瓣一样始终经服务端 /api/v1/system/cache/image 代理加载。
+bool isOverseasMusicImageUrl(String imageUrl) {
+  if (imageUrl.isEmpty) return false;
+  return imageUrl.contains('coverartarchive.org') ||
+      imageUrl.contains('archive.org') ||
+      imageUrl.contains('theaudiodb.com') ||
+      imageUrl.contains('commons.wikimedia.org');
+}
+
 /// 图片工具类
 class ImageUtil extends GetxService {
   final globalCachedEnabled = false.obs;
@@ -89,10 +99,14 @@ class ImageUtil extends GetxService {
 
     final imageUtil = Get.find<ImageUtil>();
     final globalCachedEnabled = imageUtil.globalCachedEnabled.value;
-    final isDouban = imageUrl.contains('douban');
+    // 音乐封面固定托管在境外（coverartarchive/archive.org/wikimedia/TheAudioDB），
+    // 客户端直连在境内网络基本不可达；与豆瓣一样视为「必须代理」域名，
+    // 不依赖全局图片缓存开关。
+    final mustProxy =
+        imageUrl.contains('douban') || isOverseasMusicImageUrl(imageUrl);
 
-    // 关闭全局缓存时：非 douban 且为 http 链接，直接跳过代理。
-    if (!isDouban && !globalCachedEnabled && imageUrl.startsWith('http')) {
+    // 关闭全局缓存时：非必须代理域名且为 http 链接，直接跳过代理。
+    if (!mustProxy && !globalCachedEnabled && imageUrl.startsWith('http')) {
       return imageUrl;
     }
 
@@ -110,7 +124,7 @@ class ImageUtil extends GetxService {
         : 'https://image.tmdb.org/t/p/w200/$imageUrl';
 
     // 关闭全局缓存时：相对路径解析后直接返回解析结果，不走缓存代理。
-    if (!isDouban && !globalCachedEnabled) return resolvedUrl;
+    if (!mustProxy && !globalCachedEnabled) return resolvedUrl;
 
     final encodedImageUrl = Uri.encodeComponent(resolvedUrl);
     return '$sanitizedBase/api/v1/system/cache/image?url=$encodedImageUrl';

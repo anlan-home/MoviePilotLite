@@ -25,4 +25,48 @@ void main() {
       expect(ImageUtil.convertCacheImageUrl(proxied), proxied);
     });
   });
+
+  group('isOverseasMusicImageUrl 音乐图片域名识别', () {
+    test('coverartarchive 与 archive.org 命中', () {
+      expect(
+        isOverseasMusicImageUrl(
+          'https://coverartarchive.org/release-group/abc/front-500',
+        ),
+        isTrue,
+      );
+      expect(
+        isOverseasMusicImageUrl(
+          'https://archive.org/download/mbid-abc/cover.jpg',
+        ),
+        isTrue,
+      );
+    });
+
+    test('TheAudioDB 与 wikimedia 命中', () {
+      expect(
+        isOverseasMusicImageUrl(
+          'https://www.theaudiodb.com/images/media/album/xx.png',
+        ),
+        isTrue,
+      );
+      expect(
+        isOverseasMusicImageUrl(
+          'https://commons.wikimedia.org/wiki/Special:FilePath/A.jpg?width=500',
+        ),
+        isTrue,
+      );
+    });
+
+    test('豆瓣与 TMDB 不命中', () {
+      expect(
+        isOverseasMusicImageUrl('https://img1.doubanio.com/view/album/l/p.jpg'),
+        isFalse,
+      );
+      expect(
+        isOverseasMusicImageUrl('https://image.tmdb.org/t/p/w200/abc.jpg'),
+        isFalse,
+      );
+      expect(isOverseasMusicImageUrl(''), isFalse);
+    });
+  });
 }
