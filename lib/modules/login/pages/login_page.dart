@@ -426,7 +426,9 @@ class LoginPage extends GetView<LoginController> {
           const SizedBox(height: 10),
           _buildTextField(
             controller.otpController,
-            '二步验证码（如未启用可留空）',
+            controller.mfaRequired.value
+                ? '请输入两步验证码完成登录'
+                : '二步验证码（如未启用可留空）',
             keyboardType: TextInputType.number,
             prefix: const Icon(CupertinoIcons.number),
             suffix: CupertinoButton(

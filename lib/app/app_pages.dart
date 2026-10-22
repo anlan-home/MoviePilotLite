@@ -60,8 +60,14 @@ import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_popula
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_share_controller.dart';
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_calendar_controller.dart';
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_share_statistics_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_activity_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_activity_detail_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_logs_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_activity_detail_page.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_activity_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_calendar_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_history_page.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_logs_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_popular_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_share_page.dart';
@@ -457,6 +463,52 @@ List<GetPage> buildAppPages() => [
       Get.put(SubscribeEditController(), permanent: false);
     }),
     middlewares: permissionGuards('/subscribe-edit'),
+  ),
+  GetPage(
+    name: '/subscribe-activity',
+    page: () => const SubscribeActivityPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeActivityController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          subscribeTitle: args?['title']?.toString() ?? '',
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-activity'),
+  ),
+  GetPage(
+    name: '/subscribe-activity-detail',
+    page: () => const SubscribeActivityDetailPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeActivityDetailController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          eventId: args?['event_id']?.toString() ?? '',
+          history: args?['history'] == true,
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-activity-detail'),
+  ),
+  GetPage(
+    name: '/subscribe-logs',
+    page: () => const SubscribeLogsPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeLogsController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          subscribeTitle: args?['title']?.toString() ?? '',
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-logs'),
   ),
   GetPage(
     name: '/media-organize',

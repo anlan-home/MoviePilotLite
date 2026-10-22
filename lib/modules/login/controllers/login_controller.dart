@@ -42,6 +42,12 @@ class LoginController extends GetxController {
   final isLoading = false.obs;
   final isPasswordVisible = false.obs;
 
+  /// 服务端要求二次验证后置位，登录页据此提示输入动态验证码
+  final mfaRequired = false.obs;
+
+  /// 服务端声明的二次验证方式（原样保留，当前仅支持 otp）
+  final mfaMethods = <String>[].obs;
+
   /// 自动登录时连接服务器失败（进入主页前探测未通过）
   final connectFailed = false.obs;
 
@@ -163,6 +169,8 @@ class LoginController extends GetxController {
     isAutoLogin.value = false;
     isLoading.value = false;
     connectFailed.value = false;
+    mfaRequired.value = false;
+    mfaMethods.clear();
     step.value = 1;
   }
 
@@ -334,7 +342,18 @@ class LoginController extends GetxController {
       } else {
         Get.offAllNamed('/main');
       }
+    } on MfaRequiredException catch (e) {
+      mfaRequired.value = true;
+      mfaMethods.assignAll(e.mfaMethods);
+      final hint = (e.message == null || e.message!.trim().isEmpty)
+          ? '请输入两步验证码后重试'
+          : '${e.message}，请输入两步验证码后重试';
+      ToastUtil.info(hint, title: '需要二次验证');
+    } on LoginCredentialException catch (e) {
+      mfaRequired.value = false;
+      ToastUtil.error(e.message, title: '登录失败');
     } catch (e) {
+      mfaRequired.value = false;
       ToastUtil.error(e.toString(), title: '登录失败');
     } finally {
       isLoading.value = false;

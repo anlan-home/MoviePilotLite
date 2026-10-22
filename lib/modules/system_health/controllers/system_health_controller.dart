@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/services/api_auth_failure.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 
 enum SystemHealthStatus {
@@ -75,7 +76,7 @@ class SystemHealthController extends GetxController {
       final token =
           _apiClient.token ?? _appService.latestLoginProfileAccessToken;
       if (token == null || token.isEmpty) {
-        errorMessage.value = '缺少 Token，请重新登录';
+        errorMessage.value = ApiAuthFailure.notLoggedInMessage;
         items.clear();
         return;
       }
