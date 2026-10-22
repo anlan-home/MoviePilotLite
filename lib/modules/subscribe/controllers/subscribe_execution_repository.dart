@@ -15,6 +15,7 @@ import 'package:get/get.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_execution_models.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/services/api_auth_failure.dart';
 
 class SubscribeExecutionRepository {
   SubscribeExecutionRepository({ApiClient? apiClient})
@@ -40,7 +41,7 @@ class SubscribeExecutionRepository {
         'limit': limit,
       },
     );
-    _ensureOk(response.statusCode, '获取订阅活动');
+    _ensureOk(response.statusCode, '获取订阅活动', response.data);
     return SubscriptionActivityPage.fromJson(response.data);
   }
 
@@ -54,7 +55,7 @@ class SubscribeExecutionRepository {
       '/api/v1/subscribe/$subscribeId/activity/$eventId',
       queryParameters: {'history': history},
     );
-    _ensureOk(response.statusCode, '获取活动详情');
+    _ensureOk(response.statusCode, '获取活动详情', response.data);
     final data = response.data;
     if (data is! Map) {
       throw StateError('活动详情返回格式错误');
@@ -68,7 +69,7 @@ class SubscribeExecutionRepository {
       '/api/v1/subscribe/execution/batches',
       queryParameters: {'limit': limit},
     );
-    _ensureOk(response.statusCode, '获取搜索批次');
+    _ensureOk(response.statusCode, '获取搜索批次', response.data);
     final data = response.data;
     final batches = <SubscriptionBatchStatus>[];
     if (data is List) {
@@ -124,7 +125,7 @@ class SubscribeExecutionRepository {
         queryParameters: {'length': -1},
         skipV3EnvelopeUnwrap: true,
       );
-      _ensureOk(response.statusCode, '获取运行日志');
+      _ensureOk(response.statusCode, '获取运行日志', response.data);
       final text = response.data ?? '';
       final lines = text.split('\n');
       while (lines.isNotEmpty && lines.last.trim().isEmpty) {
@@ -212,13 +213,15 @@ class SubscribeExecutionRepository {
     return lines.join('\n');
   }
 
-  void _ensureOk(int? status, String action) {
+  void _ensureOk(int? status, String action, [dynamic body]) {
     final code = status ?? 0;
     if (code < 200 || code >= 300) {
-      if (code == 401 || code == 403) {
-        throw ApiAuthException(code, '$action失败：无权访问');
+      final authFailure = ApiAuthFailure.from(code, body);
+      if (authFailure.isAuthFailure) {
+        throw ApiAuthException(code, '$action失败：${authFailure.message}');
       }
-      throw StateError('$action失败 (HTTP $code)');
+      final reason = ApiAuthFailure.extractReason(body);
+      throw StateError(reason ?? '$action失败 (HTTP $code)');
     }
   }
 }

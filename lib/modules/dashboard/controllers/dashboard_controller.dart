@@ -17,6 +17,7 @@ import 'package:moviepilot_mobile/modules/mediaserver/controllers/mediaserver_co
 import 'package:moviepilot_mobile/modules/recommend/models/recommend_api_item.dart';
 import 'package:moviepilot_mobile/modules/recommend/models/recommend_source.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/services/api_auth_failure.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 import 'package:moviepilot_mobile/utils/prefs_keys.dart';
@@ -374,9 +375,10 @@ class DashboardController extends GetxController {
         cpuUsage.value = finalUsage;
         _appendCpuChartData(finalUsage);
         talker.info('CPU数据加载成功: ${cpuUsage.value.toStringAsFixed(1)}%');
-      } else if (response.statusCode == 401) {
-        talker.error('CPU数据加载失败: 未授权，请重新登录');
-        // 这里可以添加重定向到登录页面的逻辑
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('CPU数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
       } else {
         talker.warning('CPU数据加载失败，状态码: ${response.statusCode}');
       }
@@ -403,9 +405,10 @@ class DashboardController extends GetxController {
             '网络流量数据加载成功: 上行 ${uploadKbps}Kbps, 下行 ${downloadKbps}Kbps',
           );
         }
-      } else if (response.statusCode == 401) {
-        talker.error('网络流量数据加载失败: 未授权，请重新登录');
-        // 这里可以添加重定向到登录页面的逻辑
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('网络流量数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
       } else {
         talker.warning('网络流量数据加载失败，状态码: ${response.statusCode}');
       }
@@ -427,9 +430,10 @@ class DashboardController extends GetxController {
         talker.info(
           '下载器数据加载成功: 下载速度 ${data['download_speed']}MB/s, 上传速度 ${data['upload_speed']}MB/s',
         );
-      } else if (response.statusCode == 401) {
-        talker.error('下载器数据加载失败: 未授权，请重新登录');
-        // 这里可以添加重定向到登录页面的逻辑
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('下载器数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
       } else {
         talker.warning('下载器数据加载失败，状态码: ${response.statusCode}');
       }
@@ -451,9 +455,10 @@ class DashboardController extends GetxController {
         talker.info(
           '存储空间数据加载成功: 总存储 ${_formatStorageSize(data['total_storage'] ?? 0.0)}, 已用存储 ${_formatStorageSize(data['used_storage'] ?? 0.0)}',
         );
-      } else if (response.statusCode == 401) {
-        talker.error('存储空间数据加载失败: 未授权，请重新登录');
-        // 这里可以添加重定向到登录页面的逻辑
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('存储空间数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
       } else {
         talker.warning('存储空间数据加载失败，状态码: ${response.statusCode}');
       }
@@ -479,9 +484,10 @@ class DashboardController extends GetxController {
         final statisticModel = StatisticModel.fromJson(data);
         statisticData.value = statisticModel;
         talker.info('媒体统计数据加载成功: $statisticModel');
-      } else if (response.statusCode == 401) {
-        talker.error('媒体统计数据加载失败: 未授权，请重新登录');
-        // 这里可以添加重定向到登录页面的逻辑
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('媒体统计数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
       } else {
         talker.warning('媒体统计数据加载失败，状态码: ${response.statusCode}');
       }
@@ -534,12 +540,11 @@ class DashboardController extends GetxController {
 
   /// 把后台任务接口的失败响应翻译成可展示的原因
   String _describeScheduleFailure(int statusCode, dynamic data) {
-    final detail = data is Map ? (data['detail']?.toString().trim() ?? '') : '';
-    if (statusCode == 403 || detail.contains('权限')) {
-      return schedulePermissionMessage;
-    }
-    if (statusCode == 401) return '登录已失效，请重新登录';
-    return detail.isNotEmpty ? detail : '请求失败 (HTTP $statusCode)';
+    final authFailure = ApiAuthFailure.from(statusCode, data);
+    if (authFailure.isPermissionDenied) return schedulePermissionMessage;
+    if (authFailure.isAuthFailure) return authFailure.message;
+    final reason = ApiAuthFailure.extractReason(data);
+    return reason ?? '请求失败 (HTTP $statusCode)';
   }
 
   /// 加载媒体服务器最新入库数据
@@ -574,9 +579,11 @@ class DashboardController extends GetxController {
             .toList();
         transferData.value = transferList;
         talker.info('最近入库数据加载成功: $transferList');
-      } else if (response.statusCode == 401) {
-        talker.error('最近入库数据加载失败: 未授权，请重新登录');
-      } else {
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('最近入库数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
+} else {
         talker.warning('最近入库数据加载失败，状态码: ${response.statusCode}');
       }
     } catch (e, st) {
@@ -592,9 +599,11 @@ class DashboardController extends GetxController {
         final map = Map<String, dynamic>.from(response.data as Map);
         systemInfo.value = DashboardSystemInfo.fromJson(map);
         _systemInfoSyncedAt = DateTime.now();
-      } else if (response.statusCode == 401) {
-        talker.error('系统摘要加载失败: 未授权，请重新登录');
-      } else {
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('系统摘要加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
+} else {
         talker.warning('系统摘要加载失败，状态码: ${response.statusCode}');
       }
     } catch (e, st) {
@@ -933,9 +942,11 @@ class DashboardController extends GetxController {
           '内存数据加载成功: used=${info.used}, available=${info.available}, '
           'usage=${info.usage.toStringAsFixed(1)}%',
         );
-      } else if (response.statusCode == 401) {
-        talker.error('内存数据加载失败: 未授权，请重新登录');
-      } else {
+      } else if (response.statusCode == 401 ||
+          response.statusCode == 403) {
+        talker.error('内存数据加载失败: '
+            '${ApiAuthFailure.from(response.statusCode, response.data).message}');
+} else {
         talker.warning('内存数据加载失败，状态码: ${response.statusCode}');
       }
     } catch (e, st) {

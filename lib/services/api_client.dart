@@ -113,6 +113,7 @@ class ApiClient extends g.GetxController {
           _maybeHandleUnauthorized(
             response.requestOptions,
             response.statusCode,
+            response.data,
           );
           handler.next(response);
         },
@@ -120,6 +121,7 @@ class ApiClient extends g.GetxController {
           _maybeHandleUnauthorized(
             error.requestOptions,
             error.response?.statusCode,
+            error.response?.data,
           );
           handler.next(error);
         },
@@ -150,9 +152,13 @@ class ApiClient extends g.GetxController {
 
   Future<void> _ensureReady() => _ready;
 
-  void _maybeHandleUnauthorized(RequestOptions? opts, int? status) {
+  void _maybeHandleUnauthorized(
+    RequestOptions? opts,
+    int? status, [
+    dynamic body,
+  ]) {
     if (opts?.extra['skipUnauthorizedHandling'] == true) return;
-    _handleUnauthorized(status);
+    _handleUnauthorized(status, body);
   }
 
   Future<Uint8List?> fetchResourceProxyImage(String absoluteUrl) async {
@@ -341,7 +347,7 @@ class ApiClient extends g.GetxController {
         queryParameters: queryParameters,
         options: options,
       );
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
       return response;
     } else if (method == RequestMethod.post) {
       final response = await _dio.post<T>(
@@ -350,7 +356,7 @@ class ApiClient extends g.GetxController {
         queryParameters: queryParameters,
         options: options,
       );
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
       return response;
     } else if (method == RequestMethod.put) {
       final response = await _dio.put<T>(
@@ -359,7 +365,7 @@ class ApiClient extends g.GetxController {
         queryParameters: queryParameters,
         options: options,
       );
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
       return response;
     } else if (method == RequestMethod.delete) {
       final response = await _dio.delete<T>(
@@ -368,7 +374,7 @@ class ApiClient extends g.GetxController {
         queryParameters: queryParameters,
         options: options,
       );
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
       return response;
     } else {
       throw ArgumentError('Invalid method: $method');
@@ -402,7 +408,7 @@ class ApiClient extends g.GetxController {
             ),
     );
     if (!skipUnauthorizedHandling) {
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
     }
     return response;
   }
@@ -429,7 +435,7 @@ class ApiClient extends g.GetxController {
         validateStatus: (_) => true,
       ),
     );
-    _handleUnauthorized(response.statusCode);
+    _handleUnauthorized(response.statusCode, response.data);
     return response;
   }
 
@@ -469,7 +475,7 @@ class ApiClient extends g.GetxController {
       options: options,
     );
     if (!skipUnauthorizedHandling) {
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
     }
     return response;
   }
@@ -500,7 +506,7 @@ class ApiClient extends g.GetxController {
       queryParameters: queryParameters,
       options: options,
     );
-    _handleUnauthorized(response.statusCode);
+    _handleUnauthorized(response.statusCode, response.data);
     return response;
   }
 
@@ -529,7 +535,7 @@ class ApiClient extends g.GetxController {
       validateStatus: (status) => true,
     );
     final response = await _dio.post<T>(path, data: data, options: options);
-    _handleUnauthorized(response.statusCode);
+    _handleUnauthorized(response.statusCode, response.data);
     return response;
   }
 
@@ -567,7 +573,7 @@ class ApiClient extends g.GetxController {
       options: options,
     );
     if (!skipUnauthorizedHandling) {
-      _handleUnauthorized(response.statusCode);
+      _handleUnauthorized(response.statusCode, response.data);
     }
     return response;
   }
@@ -601,7 +607,7 @@ class ApiClient extends g.GetxController {
       queryParameters: queryParameters,
       options: options,
     );
-    _handleUnauthorized(response.statusCode);
+    _handleUnauthorized(response.statusCode, response.data);
     return response;
   }
 
@@ -640,8 +646,9 @@ class ApiClient extends g.GetxController {
     );
     final status = response.statusCode ?? 0;
     if (status == 401 || status == 403) {
+      final reason = await _readErrorStream(response.data);
       if (handleAuth) {
-        _handleUnauthorized(status);
+        _handleUnauthorized(status, reason);
         throw ApiAuthException(status, response.statusMessage);
       }
       throw ApiHttpException(status, response.statusMessage);
@@ -689,7 +696,8 @@ class ApiClient extends g.GetxController {
     );
     final status = response.statusCode ?? 0;
     if (status == 401 || status == 403) {
-      _handleUnauthorized(status);
+      final reason = await _readErrorStream(response.data);
+      _handleUnauthorized(status, reason);
       throw ApiAuthException(status, response.statusMessage);
     }
     if (status >= 400) {
@@ -703,8 +711,30 @@ class ApiClient extends g.GetxController {
     return byteStream.transform(utf8.decoder).transform(const LineSplitter());
   }
 
-  void _handleUnauthorized(int? status) {
-    _recovery.handle(status);
+  void _handleUnauthorized(int? status, [dynamic body]) {
+    _recovery.handle(status, body);
+  }
+
+  /// 读取流式响应的错误体（仅短读，用于取服务端原因）。
+  ///
+  /// 错误响应体很小，但不能无上限地读；限制长度并在读取失败时
+  /// 返回 null，让鉴权处置按状态码兜底。
+  Future<String?> _readErrorStream(ResponseBody? body) async {
+    if (body == null) return null;
+    const maxBytes = 8 * 1024;
+    try {
+      final builder = <int>[];
+      await for (final chunk in body.stream.timeout(
+        const Duration(seconds: 3),
+      )) {
+        builder.addAll(chunk);
+        if (builder.length >= maxBytes) break;
+      }
+      if (builder.isEmpty) return null;
+      return utf8.decode(builder, allowMalformed: true);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _clearSession() async {
