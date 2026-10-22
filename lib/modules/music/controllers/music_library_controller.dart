@@ -71,6 +71,13 @@ String _error(Object error) => error is StateError
     ? '数据格式异常'
     : '请求失败，请稍后重试';
 
+int? _asInt(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value.trim());
+  return null;
+}
+
 String _musicName(String? value) =>
     (value ?? '').trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
 
@@ -591,6 +598,236 @@ class MusicAlbumController extends _MusicController {
       return _error(e);
     } finally {
       isOperating.value = false;
+    }
+  }
+}
+
+/// 单曲详情：POST /api/v1/music/recognize 取实体，再按 album_id 补全所属专辑曲目。
+/// 与 v3 MusicDetailView 对齐：识别为专辑时替换路由到专辑详情。
+class MusicRecordingController extends _MusicController {
+  MusicRecordingController({
+    super.apiClient,
+    super.versionService,
+    AppService? appService,
+    this.mediaId = '',
+    this.mediaSource = 'musicbrainz',
+  }) : _appService = appService;
+
+  final AppService? _appService;
+  AppService get _app => _appService ?? Get.find<AppService>();
+
+  String mediaId;
+  String mediaSource;
+  String seedTitle = '';
+  String seedArtist = '';
+
+  final recording = Rxn<MusicRecordingDetail>();
+  final album = Rxn<MusicAlbumDetail>();
+  final isLoading = false.obs;
+  final isOperating = false.obs;
+  final isSubscribed = Rxn<bool>();
+
+  /// recognize 返回专辑实体时记录目标专辑 ID，随后替换当前路由。
+  final redirectAlbumId = RxnString();
+
+  bool get canSubscribe => _app.canSubscribe;
+  bool get canSearch => _app.canSearch;
+
+  @override
+  void onInit() {
+    super.onInit();
+    final args = Get.arguments;
+    if (args is Map) {
+      mediaId = args['mediaId']?.toString().trim() ?? mediaId;
+      mediaSource = musicSource(args['mediaSource'], fallback: mediaSource);
+      seedTitle = args['title']?.toString() ?? '';
+      seedArtist = args['artist']?.toString() ?? '';
+    }
+  }
+
+  @override
+  void onReady() {
+    super.onReady();
+    load();
+  }
+
+  Future<void> load() async {
+    final request = ++generation;
+    isLoading.value = true;
+    errorText.value = null;
+    recording.value = null;
+    album.value = null;
+    isSubscribed.value = null;
+    try {
+      if (mediaId.isEmpty) throw StateError('缺少单曲标识');
+      if (!await checkSupport(request)) return;
+      final detail = MusicRecordingDetail.fromJson(
+        _map(
+          await api.post<dynamic>(
+            '/api/v1/music/recognize',
+            data: {
+              'media_source': mediaSource,
+              'media_id': mediaId,
+              'music_type': 'recording',
+            },
+          ),
+        ),
+        fallbackSource: mediaSource,
+      );
+      if (!current(request)) return;
+      if (detail.mediaId.isEmpty) throw const FormatException('数据格式异常');
+      // 订阅或旧链接可能指向专辑实体，v3 同样把当前页替换为专辑详情。
+      if (detail.isAlbum) {
+        redirectAlbumId.value = detail.mediaId;
+        if (!Get.testMode) {
+          Get.offNamed(
+            '/music/album',
+            arguments: {
+              'mediaId': detail.mediaId,
+              'mediaSource': detail.mediaSource,
+              'title': detail.displayTitle,
+            },
+          );
+        }
+        return;
+      }
+      recording.value = detail;
+      await Future.wait([
+        _loadAlbum(request, detail),
+        _loadSubscribeStatus(request, detail),
+      ]);
+    } catch (e, st) {
+      if (current(request)) errorText.value = _error(e);
+      report(e, st);
+    } finally {
+      if (current(request)) isLoading.value = false;
+    }
+  }
+
+  Future<void> _loadAlbum(int request, MusicRecordingDetail detail) async {
+    final albumId = detail.albumId?.trim() ?? '';
+    if (albumId.isEmpty) return;
+    final source = detail.mediaSource.isNotEmpty
+        ? detail.mediaSource
+        : mediaSource;
+    try {
+      final data = _map(
+        await api.get<dynamic>(
+          '/api/v1/music/album/${Uri.encodeComponent(albumId)}',
+          queryParameters: {'media_source': source},
+          skipV3EnvelopeUnwrap: true,
+        ),
+      );
+      if (current(request)) album.value = MusicAlbumDetail.fromJson(data);
+    } catch (e, st) {
+      // 专辑只是补充信息，失败不阻塞单曲本身。
+      report(e, st);
+    }
+  }
+
+  Future<void> _loadSubscribeStatus(
+    int request,
+    MusicRecordingDetail detail,
+  ) async {
+    if (!canSubscribe || detail.mediaId.isEmpty) return;
+    final source = detail.mediaSource.isNotEmpty
+        ? detail.mediaSource
+        : mediaSource;
+    try {
+      final response = await api.get<dynamic>(
+        '/api/v1/subscribe/media/${Uri.encodeComponent(detail.mediaId)}',
+        queryParameters: {
+          'media_source': source,
+          'music_type': 'recording',
+          if (detail.title?.trim().isNotEmpty == true) 'title': detail.title,
+          'mtype': '音乐',
+          if (detail.year != null) 'year': detail.year,
+        },
+      );
+      if (!current(request)) return;
+      final status = response.statusCode ?? 0;
+      if (status == 404 || status == 204) {
+        isSubscribed.value = false;
+        return;
+      }
+      final data = response.data;
+      isSubscribed.value =
+          data is Map && (data['id'] ?? (data['data'] is Map ? (data['data'] as Map)['id'] : null)) != null;
+    } catch (e, st) {
+      report(e, st);
+    }
+  }
+
+  /// 订阅 / 取消订阅单曲；返回 null 表示成功，否则为可展示的错误文案。
+  Future<String?> toggleSubscribe() async {
+    final d = recording.value;
+    if (!canSubscribe) return '当前账号没有订阅权限';
+    if (d == null) return '请先加载单曲详情';
+    if (isOperating.value || isLoading.value) return '操作进行中，请稍后重试';
+    if (d.isArtist) return '艺术家不支持订阅，请订阅其专辑或单曲';
+    final id = d.mediaId.isNotEmpty ? d.mediaId : mediaId;
+    final source = d.mediaSource.isNotEmpty ? d.mediaSource : mediaSource;
+    if (id.isEmpty || !kMusicSources.any((e) => e.id == source)) {
+      return '缺少有效的音乐来源或单曲标识';
+    }
+    final request = generation;
+    final wasSubscribed = isSubscribed.value == true;
+    isOperating.value = true;
+    try {
+      if (wasSubscribed) {
+        final response = await api.delete<dynamic>(
+          '/api/v1/subscribe/media/${Uri.encodeComponent(id)}',
+          queryParameters: {'media_source': source, 'music_type': 'recording'},
+        );
+        _checkResponse(response);
+        if (current(request)) isSubscribed.value = false;
+      } else {
+        final response = await api.post<dynamic>(
+          '/api/v1/subscribe/',
+          data: {
+            'type': '音乐',
+            'name': d.displayTitle,
+            'year': d.year?.toString() ?? '',
+            'media_source': source,
+            'media_id': id,
+            'music_type': 'recording',
+          },
+        );
+        _checkResponse(response);
+        if (response.data is! Map || response.data['success'] != true) {
+          throw const FormatException('订阅结果不明确');
+        }
+        if (current(request)) isSubscribed.value = true;
+      }
+      return null;
+    } catch (e, st) {
+      report(e, st);
+      return _error(e);
+    } finally {
+      isOperating.value = false;
+    }
+  }
+
+  /// 已启用且声明支持音乐搜索的站点 ID；接口不可用时返回 null 表示不做限制。
+  Future<Set<int>?> musicSiteIds() async {
+    try {
+      final response = await api.get<dynamic>(
+        '/api/v1/site/media/music',
+        skipV3EnvelopeUnwrap: true,
+      );
+      if ((response.statusCode ?? 0) >= 400) return null;
+      final data = response.data;
+      final raw = data is List ? data : (data is Map ? data['data'] : null);
+      if (raw is! List) return null;
+      return raw
+          .whereType<Map>()
+          .where((e) => e['is_active'] != false)
+          .map((e) => _asInt(e['id']))
+          .whereType<int>()
+          .toSet();
+    } catch (e, st) {
+      report(e, st);
+      return null;
     }
   }
 }

@@ -89,6 +89,7 @@ import 'package:moviepilot_mobile/modules/music/controllers/music_search_control
 import 'package:moviepilot_mobile/modules/music/pages/music_album_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_artist_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_library_page.dart';
+import 'package:moviepilot_mobile/modules/music/pages/music_recording_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_search_page.dart';
 import 'package:moviepilot_mobile/modules/mfa/controllers/mfa_settings_controller.dart';
 import 'package:moviepilot_mobile/modules/mfa/pages/mfa_settings_page.dart';
@@ -281,6 +282,8 @@ List<GetPage> buildAppPages() => [
         c.year = args['year'] ?? '';
         c.season = args['season'];
         c.mtype = args['mtype'] ?? 'movie';
+        final musicType = args['music_type']?.trim() ?? '';
+        c.musicType = musicType.isEmpty ? null : musicType;
         c.searchText.value = args['title'] ?? '';
         c.prefillTitle = args['title'];
         c.prefillBackdrop = args['backdrop'] ?? args['backdrop_path'];
@@ -563,6 +566,14 @@ List<GetPage> buildAppPages() => [
       Get.put(MusicAlbumController(), permanent: false);
     }),
     middlewares: permissionGuards('/music/album'),
+  ),
+  GetPage(
+    name: '/music/detail',
+    page: () => const MusicRecordingPage(),
+    binding: BindingsBuilder(() {
+      Get.put(MusicRecordingController(), permanent: false);
+    }),
+    middlewares: permissionGuards('/music/detail'),
   ),
   GetPage(
     name: '/music/search',

@@ -344,57 +344,74 @@ class MusicAlbumPage extends GetView<MusicAlbumController> {
       height: 1.4,
       color: theme.colorScheme.onSurfaceVariant,
     );
-    return MergeSemantics(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          border: isLast
-              ? null
-              : Border(
-                  bottom: BorderSide(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
-                    width: 0.5,
-                  ),
+    final trackId = track.mediaId?.trim() ?? '';
+    final content = Container(
+      padding: const EdgeInsets.symmetric(vertical: 14),
+      decoration: BoxDecoration(
+        border: isLast
+            ? null
+            : Border(
+                bottom: BorderSide(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.08),
+                  width: 0.5,
                 ),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 28),
-              child: Text(
-                (track.trackNumber ?? index + 1).toString(),
-                textAlign: TextAlign.center,
-                style: secondaryStyle.copyWith(fontSize: 15),
               ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(minWidth: 28),
+            child: Text(
+              (track.trackNumber ?? index + 1).toString(),
+              textAlign: TextAlign.center,
+              style: secondaryStyle.copyWith(fontSize: 15),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    track.displayTitle,
-                    style: const TextStyle(fontSize: 16, height: 1.35),
-                  ),
-                  if (artists.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(artists, style: secondaryStyle),
-                  ],
-                  if (largeText && duration.isNotEmpty) ...[
-                    const SizedBox(height: 3),
-                    Text(duration, style: secondaryStyle),
-                  ],
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  track.displayTitle,
+                  style: const TextStyle(fontSize: 16, height: 1.35),
+                ),
+                if (artists.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(artists, style: secondaryStyle),
                 ],
-              ),
+                if (largeText && duration.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(duration, style: secondaryStyle),
+                ],
+              ],
             ),
-            if (!largeText && duration.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(left: 16, top: 2),
-                child: Text(duration, style: secondaryStyle),
-              ),
-          ],
+          ),
+          if (!largeText && duration.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 16, top: 2),
+              child: Text(duration, style: secondaryStyle),
+            ),
+        ],
+      ),
+    );
+    if (trackId.isEmpty) return MergeSemantics(child: content);
+    final source = controller.album.value?.mediaSource.trim().isNotEmpty == true
+        ? controller.album.value!.mediaSource
+        : controller.mediaSource;
+    return MergeSemantics(
+      child: CupertinoButton(
+        padding: EdgeInsets.zero,
+        onPressed: () => Get.toNamed(
+          '/music/detail',
+          arguments: {
+            'mediaId': trackId,
+            'mediaSource': source,
+            'title': track.displayTitle,
+          },
         ),
+        child: content,
       ),
     );
   }
