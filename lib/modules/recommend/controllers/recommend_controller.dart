@@ -212,7 +212,10 @@ class RecommendController extends GetxController {
   Future<void> _requestQueue = Future.value();
   final _pendingKeys = <String>{};
   final Map<String, DateTime> _lastFetchAt = {};
-  bool _cookieRefreshTriggered = false;
+
+  /// 进行中的 Cookie 刷新。冷启动时多个分区会并发触发刷新，
+  /// 共享同一个 Future，所有调用方都等到刷新真正完成再发请求。
+  Future<void>? _cookieRefresh;
 
   List<RecommendCategory> get visibleCategories => _visibleCategories;
 
@@ -256,10 +259,16 @@ class RecommendController extends GetxController {
     });
   }
 
-  Future<void> ensureUserCookieRefreshed() async {
-    if (_cookieRefreshTriggered) return;
-    _cookieRefreshTriggered = true;
-    await _refreshUserCookie();
+  /// 确保用户 Cookie 已就绪。并发调用方共享同一次刷新并一起等待它完成——
+  /// 豆瓣等来源不带 Cookie 时服务端会返回空列表，所以首个请求就必须带上。
+  Future<void> ensureUserCookieRefreshed() {
+    final pending = _cookieRefresh;
+    if (pending != null) return pending;
+    final future = _refreshUserCookie().whenComplete(() {
+      _cookieRefresh = null;
+    });
+    _cookieRefresh = future;
+    return future;
   }
 
   Future<void> _refreshUserCookie() async {
@@ -278,8 +287,6 @@ class RecommendController extends GetxController {
       );
     } catch (e, st) {
       _log.handle(e, stackTrace: st, message: '刷新推荐 Cookie 失败');
-    } finally {
-      _cookieRefreshTriggered = false;
     }
     return;
   }
@@ -353,7 +360,8 @@ class RecommendController extends GetxController {
 
   void prefetchCurrentCategory({bool forceRefresh = false}) {
     if (!_appService.canDiscovery) return;
-    _refreshUserCookie();
+    // 预热 Cookie；入队后的请求自身会等待这次刷新完成
+    unawaited(ensureUserCookieRefreshed());
     for (final subCategory in currentSubCategories) {
       ensureSubCategoryLoaded(subCategory, forceRefresh: forceRefresh);
     }
@@ -361,7 +369,8 @@ class RecommendController extends GetxController {
 
   void prefetchAllVisibleCategories({bool forceRefresh = false}) {
     if (!_appService.canDiscovery) return;
-    _refreshUserCookie();
+    // 预热 Cookie；入队后的请求自身会等待这次刷新完成
+    unawaited(ensureUserCookieRefreshed());
     for (final subCategory in allVisibleSubCategories) {
       ensureSubCategoryLoaded(subCategory, forceRefresh: forceRefresh);
     }
@@ -604,6 +613,9 @@ class RecommendController extends GetxController {
     errorByKey.refresh();
 
     try {
+      // 先等 Cookie 就绪再请求：冷启动时 AppService 里还没有 Cookie，
+      // 抢先发出去会拿到「成功但空列表」，表现为首屏没数据、刷新才有。
+      await ensureUserCookieRefreshed();
       final url = RecommendSource.resolveApiPath(key);
       final response = await _apiClient.get<dynamic>(url);
       final statusCode = response.statusCode ?? 0;
@@ -617,7 +629,6 @@ class RecommendController extends GetxController {
       final category = _categoryForSubCategory(subCategory);
       final fallbackMediaType = category?.label ?? '电影';
       final items = _parseItems(list, fallbackMediaType: fallbackMediaType);
-      await ensureUserCookieRefreshed();
 
       itemsByKey[key] = items;
       itemsByKey.refresh();
