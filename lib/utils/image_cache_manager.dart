@@ -8,19 +8,18 @@ import 'package:moviepilot_mobile/utils/image_file_service_factory_stub.dart'
 class AppImageCacheManager {
   AppImageCacheManager._();
 
-  static const int decodedImageMaximumSize = 80;
-  static const int decodedImageMaximumSizeBytes = 48 * 1024 * 1024;
+  /// 解码缓存张数上限。海报解码后单张约 2MB，字节预算才是实际约束，
+  /// 张数保留余量以免小图被过早淘汰。
+  static const int decodedImageMaximumSize = 400;
+  static const int decodedImageMaximumSizeBytes = 120 * 1024 * 1024;
+  static const int diskMaximumObjects = 1000;
 
   static final CacheManager instance = _NonEmptyCacheManager();
 
   static void configureGlobalDecodedCache() {
     final cache = PaintingBinding.instance.imageCache;
-    if (cache.maximumSize > decodedImageMaximumSize) {
-      cache.maximumSize = decodedImageMaximumSize;
-    }
-    if (cache.maximumSizeBytes > decodedImageMaximumSizeBytes) {
-      cache.maximumSizeBytes = decodedImageMaximumSizeBytes;
-    }
+    cache.maximumSize = decodedImageMaximumSize;
+    cache.maximumSizeBytes = decodedImageMaximumSizeBytes;
   }
 }
 
@@ -30,7 +29,7 @@ class _NonEmptyCacheManager extends CacheManager {
         Config(
           'appImageCache',
           stalePeriod: const Duration(days: 7),
-          maxNrOfCacheObjects: 300,
+          maxNrOfCacheObjects: AppImageCacheManager.diskMaximumObjects,
           fileService: _RejectEmptyFileService(createAppImageFileService()),
         ),
       );

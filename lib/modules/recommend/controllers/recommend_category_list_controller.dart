@@ -16,8 +16,11 @@ import 'package:moviepilot_mobile/modules/recommend/models/recommend_source.dart
 /// 推荐分类列表控制器，支持分页加载
 class RecommendCategoryListController extends GetxController {
   static const _viewModePrefKey = 'recommend_category_list_view_mode';
-  static const _routeImageCacheMaximumSize = 40;
-  static const _routeImageCacheMaximumSizeBytes = 16 * 1024 * 1024;
+
+  /// 长列表页在全局预算之上收一档，避免无限滚动时把解码缓存吃满，
+  /// 但值不能压到「一屏都放不下」，否则页内自己就会反复淘汰重解码。
+  static const _routeImageCacheMaximumSize = 240;
+  static const _routeImageCacheMaximumSizeBytes = 80 * 1024 * 1024;
 
   RecommendCategoryListController({
     required String key,
@@ -278,9 +281,9 @@ class RecommendCategoryListController extends GetxController {
   }
 
   void _restoreImageCacheLimits() {
+    // 只恢复限额，不清空缓存。此前这里会 whole-clear 全局解码缓存，
+    // 导致从任何分类列表页返回后，探索/推荐页的海报全部重新解码。
     final cache = PaintingBinding.instance.imageCache;
-    cache.clearLiveImages();
-    cache.clear();
     final previousSize = _previousImageCacheMaximumSize;
     final previousBytes = _previousImageCacheMaximumSizeBytes;
     if (previousSize != null) {
