@@ -96,37 +96,40 @@ class CpuWidget extends StatelessWidget {
     return Obx(() {
       final cpuUsage = controller.cpuUsage.value;
       final chartData = controller.cpuChartData;
-      return DashboardMetricCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'CPU 负载',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.2,
-                color: palette.faintText,
-              ),
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 30,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: DashboardValueText(
-                  '${cpuUsage.toStringAsFixed(0)}%',
-                  fontSize: 24,
+      return Skeletonizer(
+        enabled: chartData.isEmpty,
+        child: DashboardMetricCard(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'CPU 负载',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.2,
+                  color: palette.faintText,
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            _buildCompactTrendChart(
-              chartData: chartData,
-              color: palette.primary,
-              dividerColor: palette.divider,
-            ),
-          ],
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 30,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: DashboardValueText(
+                    '${cpuUsage.toStringAsFixed(0)}%',
+                    fontSize: 24,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _buildCompactTrendChart(
+                chartData: chartData,
+                color: palette.primary,
+                dividerColor: palette.divider,
+              ),
+            ],
+          ),
         ),
       );
     });

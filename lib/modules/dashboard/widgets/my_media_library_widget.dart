@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/mixed_img_widget.dart';
 import 'package:moviepilot_mobile/modules/mediaserver/controllers/mediaserver_controller.dart';
@@ -18,6 +20,10 @@ class MyMediaLibraryWidget extends StatelessWidget {
       final libraries = mediaServerController.mediaLibraries.value;
 
       if (libraries.isEmpty) {
+        final dashboardController = Get.find<DashboardController>();
+        if (dashboardController.isWidgetLoading('我的媒体库')) {
+          return const DashboardPosterRailSkeleton();
+        }
         return const _EmptyState(
           icon: CupertinoIcons.collections,
           title: '暂无媒体库数据',

@@ -317,6 +317,17 @@ class RecommendController extends GetxController {
     return isLoadingByKey[key] ?? false;
   }
 
+  /// 该分组是否还没有任何结果（既没有缓存条目，也没有已记录的失败）。
+  /// 首屏用它判断该画骨架而不是空白。
+  bool isAwaitingFirstResult(String subCategory) {
+    if (!_appService.canDiscovery) return false;
+    final key = keyForSubCategory(subCategory);
+    if (key == null) return false;
+    if (errorByKey[key] != null) return false;
+    // 请求成功但确实返回空列表时也算「已有结果」，否则骨架会一直挂着不消失
+    return !itemsByKey.containsKey(key);
+  }
+
   String? errorForSubCategory(String subCategory) {
     final key = keyForSubCategory(subCategory);
     if (key == null) return null;

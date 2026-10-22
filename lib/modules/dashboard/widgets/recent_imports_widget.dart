@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/media_organize/models/media_organize_models.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
@@ -19,6 +20,9 @@ class RecentImportsWidget extends StatelessWidget {
     return Obx(() {
       final items = controller.recentImports;
       if (items.isEmpty) {
+        if (controller.isWidgetLoading('近期整理')) {
+          return const DashboardListSkeleton(itemCount: 4);
+        }
         return const DashboardEmptyState(
           icon: CupertinoIcons.film,
           title: '暂无近期整理记录',
