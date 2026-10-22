@@ -56,6 +56,8 @@ class MusicExploreItem {
     this.year,
     this.coverUrl,
     this.genres = const [],
+    this.album,
+    this.albumId,
   });
 
   final String musicType;
@@ -67,9 +69,12 @@ class MusicExploreItem {
   final int? year;
   final String? coverUrl;
   final List<String> genres;
+  final String? album;
+  final String? albumId;
 
   bool get isArtist => musicType == 'artist';
   bool get isAlbum => musicType == 'album';
+  bool get isRecording => !isArtist && !isAlbum;
 
   String get displayTitle =>
       title?.trim().isNotEmpty == true ? title!.trim() : '未知名称';
@@ -95,6 +100,8 @@ class MusicExploreItem {
       year: _integer(json['year']),
       coverUrl: _text(json['cover_url']) ?? _text(json['poster_path']),
       genres: _strings(json['genres']),
+      album: _text(json['album']),
+      albumId: _text(json['album_id']),
     );
   }
 }
@@ -153,6 +160,7 @@ class MusicArtistDetail {
 /// 专辑内单曲（MusicAlbumInfo.tracks 元素）。
 class MusicTrack {
   const MusicTrack({
+    this.mediaId,
     this.trackNumber,
     this.discNumber,
     this.title,
@@ -160,6 +168,7 @@ class MusicTrack {
     this.duration,
   });
 
+  final String? mediaId;
   final int? trackNumber;
   final int? discNumber;
   final String? title;
@@ -179,6 +188,7 @@ class MusicTrack {
 
   factory MusicTrack.fromJson(Map<String, dynamic> json) {
     return MusicTrack(
+      mediaId: _text(json['media_id']),
       trackNumber: _integer(json['track_number']),
       discNumber: _integer(json['disc_number']),
       title: _text(json['title']),
@@ -196,13 +206,17 @@ class MusicAlbumDetail {
     this.title,
     this.artist,
     this.artists = const [],
+    this.artistIds = const [],
     this.year,
     this.releaseDate,
     this.totalTracks,
+    this.duration,
+    this.albumType,
     this.coverUrl,
     this.genres = const [],
     this.rating,
     this.overview,
+    this.detailLink,
     this.tracks = const [],
   });
 
@@ -211,13 +225,17 @@ class MusicAlbumDetail {
   final String? title;
   final String? artist;
   final List<String> artists;
+  final List<String> artistIds;
   final int? year;
   final String? releaseDate;
   final int? totalTracks;
+  final int? duration;
+  final String? albumType;
   final String? coverUrl;
   final List<String> genres;
   final double? rating;
   final String? overview;
+  final String? detailLink;
   final List<MusicTrack> tracks;
 
   String get displayTitle =>
@@ -237,19 +255,136 @@ class MusicAlbumDetail {
       title: _text(json['title']),
       artist: _text(json['artist']),
       artists: _strings(json['artists']),
+      artistIds: _strings(json['artist_ids']),
       year: _integer(json['year']),
       releaseDate: _text(json['release_date']),
       totalTracks: _integer(json['total_tracks']),
+      duration: _integer(json['duration']),
+      albumType: _text(json['album_type']),
       coverUrl: _text(json['cover_url']) ?? _text(json['poster_path']),
       genres: _strings(json['genres']),
       rating: _decimal(json['rating']) ?? _decimal(json['vote_average']),
       overview: _text(json['overview']),
+      detailLink: _text(json['detail_link']),
       tracks:
           (json['tracks'] is List ? json['tracks'] as List : null)
               ?.whereType<Map>()
               .map((e) => MusicTrack.fromJson(Map<String, dynamic>.from(e)))
               .toList() ??
           const [],
+    );
+  }
+}
+
+/// 单曲详情（POST /api/v1/music/recognize，music_type: recording）。
+///
+/// v3 用同一实体返回单曲、专辑与艺术家；这里只保留单曲浏览需要的字段，
+/// 一旦 `musicType == 'album'` 调用方应改走专辑详情。
+class MusicRecordingDetail {
+  const MusicRecordingDetail({
+    required this.mediaSource,
+    required this.mediaId,
+    this.musicType = 'recording',
+    this.title,
+    this.artist,
+    this.artists = const [],
+    this.artistIds = const [],
+    this.album,
+    this.albumId,
+    this.albumArtist,
+    this.albumType,
+    this.year,
+    this.releaseDate,
+    this.trackNumber,
+    this.discNumber,
+    this.totalTracks,
+    this.duration,
+    this.isrc,
+    this.coverUrl,
+    this.genres = const [],
+    this.listenCount,
+    this.detailLink,
+  });
+
+  final String mediaSource;
+  final String mediaId;
+  final String musicType;
+  final String? title;
+  final String? artist;
+  final List<String> artists;
+  final List<String> artistIds;
+  final String? album;
+  final String? albumId;
+  final String? albumArtist;
+  final String? albumType;
+  final int? year;
+  final String? releaseDate;
+  final int? trackNumber;
+  final int? discNumber;
+  final int? totalTracks;
+  final int? duration;
+  final String? isrc;
+  final String? coverUrl;
+  final List<String> genres;
+  final int? listenCount;
+  final String? detailLink;
+
+  bool get isAlbum => musicType == 'album';
+  bool get isArtist => musicType == 'artist';
+
+  String get displayTitle =>
+      title?.trim().isNotEmpty == true ? title!.trim() : '未知曲目';
+
+  String get displayArtist {
+    final a = artist?.trim();
+    if (a != null && a.isNotEmpty) return a;
+    if (artists.isNotEmpty) return artists.take(2).join(' / ');
+    return '';
+  }
+
+  String get displayDuration {
+    final seconds = duration ?? 0;
+    if (seconds <= 0) return '';
+    final m = seconds ~/ 60;
+    final s = seconds % 60;
+    return '$m:${s.toString().padLeft(2, '0')}';
+  }
+
+  /// 曲目序号文本，多碟专辑按 v3 展示为「碟-轨」。
+  String get displayTrackNumber {
+    final track = trackNumber;
+    if (track == null || track <= 0) return '';
+    final disc = discNumber;
+    return disc != null && disc > 1 ? '$disc-$track' : track.toString();
+  }
+
+  factory MusicRecordingDetail.fromJson(
+    Map<String, dynamic> json, {
+    String fallbackSource = 'musicbrainz',
+  }) {
+    return MusicRecordingDetail(
+      mediaSource: musicSource(json['media_source'], fallback: fallbackSource),
+      mediaId: _text(json['media_id']) ?? '',
+      musicType: (_text(json['music_type']) ?? 'recording').toLowerCase(),
+      title: _text(json['title']),
+      artist: _text(json['artist']),
+      artists: _strings(json['artists']),
+      artistIds: _strings(json['artist_ids']),
+      album: _text(json['album']),
+      albumId: _text(json['album_id']),
+      albumArtist: _text(json['album_artist']),
+      albumType: _text(json['album_type']),
+      year: _integer(json['year']),
+      releaseDate: _text(json['release_date']),
+      trackNumber: _integer(json['track_number']),
+      discNumber: _integer(json['disc_number']),
+      totalTracks: _integer(json['total_tracks']),
+      duration: _integer(json['duration']),
+      isrc: _text(json['isrc']),
+      coverUrl: _text(json['cover_url']) ?? _text(json['poster_path']),
+      genres: _strings(json['genres']),
+      listenCount: _integer(json['listen_count']),
+      detailLink: _text(json['detail_link']),
     );
   }
 }

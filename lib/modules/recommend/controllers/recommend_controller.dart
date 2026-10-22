@@ -236,7 +236,6 @@ class RecommendController extends GetxController {
   void onClose() {
     categoryPageController.dispose();
     _bannerPageController?.dispose();
-    _trimInactiveDecodedImages();
     super.onClose();
   }
 
@@ -355,10 +354,6 @@ class RecommendController extends GetxController {
     for (final subCategory in allVisibleSubCategories) {
       ensureSubCategoryLoaded(subCategory, forceRefresh: forceRefresh);
     }
-  }
-
-  void _trimInactiveDecodedImages() {
-    PaintingBinding.instance.imageCache.clear();
   }
 
   bool isCategoryVisible(RecommendCategory category) {

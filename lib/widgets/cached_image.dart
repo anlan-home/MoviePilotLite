@@ -25,8 +25,8 @@ class CachedImage extends StatelessWidget {
     this.cacheManager,
     this.memCacheWidth,
     this.memCacheHeight,
-    this.fadeInDuration = const Duration(milliseconds: 300),
-    this.fadeOutDuration = const Duration(milliseconds: 100),
+    this.fadeInDuration = const Duration(milliseconds: 120),
+    this.fadeOutDuration = const Duration(milliseconds: 80),
     this.cookie,
     this.convertProxyUrl = true,
   });
@@ -74,7 +74,9 @@ class CachedImage extends StatelessWidget {
   /// 传入已转换过的地址时会被自动识别并透传，不会二次包裹。
   final bool convertProxyUrl;
 
-  static const double _decodeOverscan = 1.35;
+  /// 解码尺寸的轻微余量。取值越大内存占用增长越快（近似平方），
+  /// 而 BoxFit.cover 下超出部分并不会被看到，1.1 已足够覆盖取整误差。
+  static const double _decodeOverscan = 1.1;
   static const int _minAutoCacheExtent = 64;
   static const int _maxAutoCacheExtent = 1600;
 
@@ -106,8 +108,8 @@ class CachedImage extends StatelessWidget {
       memCacheHeight: effectiveMemCacheHeight,
       fadeInDuration: fadeInDuration,
       fadeOutDuration: fadeOutDuration,
-      errorListener: (_) {
-        if (cacheKey != null) {
+      errorListener: (error) {
+        if (cacheKey != null && _isNotFound(error)) {
           _evictBrokenImage(manager, cacheKey);
         }
       },
@@ -160,6 +162,10 @@ class CachedImage extends StatelessWidget {
     return ClipRRect(borderRadius: borderRadius!, child: child);
   }
 
+  /// 只有明确「资源不存在」才删除缓存条目。
+  /// 网络抖动、超时、TLS 中断等错误不应丢弃已下载好的文件，否则下次还得重下。
+  static bool _isNotFound(Object error) => shouldEvictImageOnError(error);
+
   void _evictBrokenImage(CacheManager manager, String cacheKey) {
     if (cacheKey.isEmpty) return;
     unawaited(manager.removeFile(cacheKey).catchError((_) {}));
@@ -211,6 +217,17 @@ class CachedImage extends StatelessWidget {
     }
     return url;
   }
+}
+
+/// 图片加载失败时是否应该丢弃磁盘缓存条目。
+///
+/// 只有服务端明确表示资源不存在（404/410）才值得删；网络抖动、超时、
+/// TLS 中断等临时错误若也删缓存，已下载好的文件会被白白重下。
+bool shouldEvictImageOnError(Object error) {
+  if (error is HttpExceptionWithStatus) {
+    return error.statusCode == 404 || error.statusCode == 410;
+  }
+  return false;
 }
 
 class _ImageStateSurface extends StatelessWidget {
