@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../controllers/dashboard_controller.dart';
@@ -34,6 +35,10 @@ class RecentAddedWidget extends StatelessWidget {
           : totalCount / transferData.length;
       final todayCount = transferData.isEmpty ? 0 : transferData.last;
       final chartData = _prepareChartData(transferData);
+
+      if (transferData.isEmpty && controller.isWidgetLoading('最近入库')) {
+        return const DashboardChartSkeleton();
+      }
 
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,

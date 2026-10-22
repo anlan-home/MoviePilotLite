@@ -1010,6 +1010,15 @@ class DashboardController extends GetxController {
   /// 才由页面调用 [activateWidgets] 补齐，启动阶段不再把全部组件的请求一起打出去。
   final Set<String> _activatedWidgets = {};
 
+  /// 已完成过至少一次加载（无论成败）的组件名。
+  ///
+  /// 未完成的组件在无数据时画骨架，这样既覆盖「刚渲染、请求还没发出」的几帧，
+  /// 也覆盖「请求已发但未回」；以加载尝试结束（而不是拿到数据）为界，
+  /// 没有数据源的组件才不会永远停在骨架上。
+  final _settledWidgets = <String>{}.obs;
+
+  bool isWidgetLoading(String name) => !_settledWidgets.contains(name);
+
   /// 区块首次挂载时调用，立即为其中尚未激活的组件加载数据
   void activateWidgets(Iterable<String> names) {
     final added = <String>{};
@@ -1061,6 +1070,9 @@ class DashboardController extends GetxController {
       await Future.wait(futures);
     } catch (e, st) {
       talker.handle(e, stackTrace: st, message: '加载数据失败');
+    } finally {
+      _settledWidgets.addAll(names);
+      _settledWidgets.refresh();
     }
   }
 

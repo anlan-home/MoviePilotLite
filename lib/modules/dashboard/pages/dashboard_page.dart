@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/gen/assets.gen.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_shortcuts.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/cpu_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/media_recommend_widget.dart';
@@ -30,6 +31,7 @@ import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
 import 'package:moviepilot_mobile/widgets/constrained_page_content.dart';
 import 'package:moviepilot_mobile/widgets/dashboard_scaffold.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import '../controllers/dashboard_controller.dart';
 
@@ -368,6 +370,15 @@ class DashboardPage extends GetView<DashboardController> {
             ),
           ),
       ];
+      // 配置（本地或服务端）还没读到时 displayedWidgets 为空，先给一个
+      // 与默认布局同构的骨架页，避免首屏出现整页空白。
+      if (sections.isEmpty) {
+        return SliverToBoxAdapter(
+          child: ConstrainedPageContent(
+            child: const DashboardFirstPaintSkeleton(),
+          ),
+        );
+      }
       return SliverList(
         delegate: SliverChildListDelegate([
           for (final section in sections)
@@ -644,7 +655,9 @@ class DashboardPage extends GetView<DashboardController> {
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 32),
-        child: DashboardMetricCard(
+        child: Skeletonizer(
+          enabled: storage.isEmpty,
+          child: DashboardMetricCard(
           padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -722,6 +735,7 @@ class DashboardPage extends GetView<DashboardController> {
                 ],
               ),
             ],
+          ),
           ),
         ),
       );

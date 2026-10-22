@@ -4,6 +4,7 @@ import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
 import 'package:moviepilot_mobile/modules/dashboard/models/schedule_model.dart';
 import 'package:moviepilot_mobile/modules/dashboard/models/transfer_queue_job.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 
 /// 后台任务列表组件：整理队列与运行中任务排在前面，运行中任务显示真实进度
@@ -36,16 +37,24 @@ class ScheduleWidget extends StatelessWidget {
       ];
 
       if (tasks.isEmpty) {
-        if (error != null) {
-          final isPermission =
-              error == DashboardController.schedulePermissionMessage;
-          return DashboardEmptyState(
-            icon: isPermission
-                ? CupertinoIcons.lock_shield
-                : CupertinoIcons.exclamationmark_triangle,
-            title: isPermission ? error : '后台任务加载失败',
-            subtitle: isPermission ? '后台任务仅管理员账号可查看' : error,
+        final isPermission =
+            error == DashboardController.schedulePermissionMessage;
+        if (isPermission) {
+          return const DashboardEmptyState(
+            icon: CupertinoIcons.lock_shield,
+            title: DashboardController.schedulePermissionMessage,
+            subtitle: '后台任务仅管理员账号可查看',
           );
+        }
+        if (error != null) {
+          return DashboardEmptyState(
+            icon: CupertinoIcons.exclamationmark_triangle,
+            title: '后台任务加载失败',
+            subtitle: error,
+          );
+        }
+        if (controller.isWidgetLoading('后台任务')) {
+          return const DashboardListSkeleton(itemCount: 3, showPoster: false);
         }
         return const DashboardEmptyState(
           icon: CupertinoIcons.calendar_badge_minus,

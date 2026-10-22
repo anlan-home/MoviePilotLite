@@ -9,6 +9,7 @@ import 'package:moviepilot_mobile/modules/recommend/models/recommend_api_item.da
 import 'package:moviepilot_mobile/utils/http_path_builder_util.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:moviepilot_mobile/widgets/cached_image.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 /// 推荐媒体组件：横幅轮播展示当前来源的前几条推荐，对应 Web 端仪表板的「推荐媒体」卡片
 class MediaRecommendWidget extends StatefulWidget {
@@ -224,7 +225,36 @@ class _MediaRecommendWidgetState extends State<MediaRecommendWidget> {
     required String? error,
   }) {
     if (loading) {
-      return const Center(child: CupertinoActivityIndicator());
+      return Skeletonizer(
+        child: Container(
+          color: palette.surfaceAlt,
+          padding: const EdgeInsets.all(16),
+          alignment: Alignment.bottomLeft,
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Bone(
+                width: 120,
+                height: 20,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              const SizedBox(height: 10),
+              Bone(
+                width: double.infinity,
+                height: 12,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              const SizedBox(height: 6),
+              Bone(
+                width: 180,
+                height: 12,
+                borderRadius: BorderRadius.circular(6),
+              ),
+            ],
+          ),
+        ),
+      );
     }
     return Center(
       child: Column(
