@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/painting.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:moviepilot_mobile/utils/image_cache_manager.dart';
@@ -41,6 +41,52 @@ void main() {
     test('默认仍走缓存代理地址转换', () {
       const image = CachedImage(imageUrl: 'https://example.com/a.jpg');
       expect(image.convertProxyUrl, isTrue);
+    });
+  });
+
+  group('加载态动画', () {
+    testWidgets('加载中不再显示转圈进度条', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: SizedBox(
+              width: 172,
+              height: 258,
+              child: CachedImage(
+                imageUrl: 'https://example.com/loading.jpg',
+                cookie: 'a=b',
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      await tester.pump(const Duration(milliseconds: 100));
+      // 微光占位在动，但不应出现加载指示器。
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    });
+
+    testWidgets('减少动效时占位不持续动画', (tester) async {
+      await tester.pumpWidget(
+        const MediaQuery(
+          data: MediaQueryData(disableAnimations: true),
+          child: MaterialApp(
+            home: Scaffold(
+              body: SizedBox(
+                width: 172,
+                height: 258,
+                child: CachedImage(
+                  imageUrl: 'https://example.com/static.jpg',
+                  cookie: 'a=b',
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // 占位若仍在无限循环动画，pumpAndSettle 会超时抛错。
+      await tester.pumpAndSettle(const Duration(milliseconds: 100));
     });
   });
 
