@@ -247,7 +247,8 @@ class AppSettingController extends GetxController {
       final info = await _updateService.fetchLatestRelease();
       updateInfo.value = info;
       if (!info.isNewer) {
-        if (Platform.isIOS) {
+        // 线路选择与自定义加速源都在更新弹框内，已是最新版本时也要能进入。
+        if (Platform.isAndroid || Platform.isIOS) {
           _showUpdateDialog(info);
           return;
         }
@@ -557,7 +558,7 @@ class AppSettingController extends GetxController {
                             color: colorScheme.surfaceContainerHighest,
                             onPressed: Get.back,
                             child: Text(
-                              '稍后',
+                              info.isNewer ? '稍后' : '关闭',
                               style: TextStyle(color: colorScheme.onSurface),
                             ),
                           ),
@@ -569,17 +570,19 @@ class AppSettingController extends GetxController {
                             color: colorScheme.primary,
                             onPressed: () {
                               Get.back();
-                              if (canDownloadApk) {
-                                downloadLatestApk(info);
-                              } else {
+                              if (!canDownloadApk) {
                                 WebUtil.open(
                                   url: info.releaseUrl,
                                   internal: false,
                                 );
+                              } else if (info.isNewer) {
+                                downloadLatestApk(info);
                               }
                             },
                             child: Text(
-                              canDownloadApk ? '下载更新' : '前往 Release',
+                              canDownloadApk
+                                  ? (info.isNewer ? '下载更新' : '完成')
+                                  : '前往 Release',
                               style: TextStyle(color: colorScheme.onPrimary),
                             ),
                           ),
