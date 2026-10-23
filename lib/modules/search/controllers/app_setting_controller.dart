@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -354,8 +355,26 @@ class AppSettingController extends GetxController {
     }
   }
 
+  /// 仅测试使用：覆盖平台判断，验证各平台下的内容与按钮。
+  @visibleForTesting
+  bool? debugIsAndroidOverride;
+
+  @visibleForTesting
+  bool? debugIsIosOverride;
+
+  /// 仅测试使用：直接打开更新弹框。
+  @visibleForTesting
+  void showUpdateDialogForTest(AppUpdateInfo info) => _showUpdateDialog(info);
+
+  bool get _isAndroid => debugIsAndroidOverride ?? Platform.isAndroid;
+
+  bool get _isIos => debugIsIosOverride ?? Platform.isIOS;
+
   void _showUpdateDialog(AppUpdateInfo info) {
-    final canDownloadApk = Platform.isAndroid;
+    final canDownloadApk = _isAndroid;
+    // iOS 不能安装 APK，但同样可以查看、测速与配置线路，便于提前选好加速源。
+    // 无 APK 资产时仍展示线路，测速会回退到仓库归档包。
+    final canSelectMirror = _isAndroid || _isIos;
     final size = info.apkSize == null
         ? ''
         : SizeFormatter.formatSize(info.apkSize!.toDouble());
@@ -496,58 +515,68 @@ class AppSettingController extends GetxController {
                               ),
                             ),
                           ],
+                          if (canSelectMirror) ...[
+                            const SizedBox(height: 18),
+                            Row(
+                              children: [
+                                Text(
+                                  '下载线路',
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const Spacer(),
+                                CupertinoButton(
+                                  minimumSize: Size.zero,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  onPressed: () => _openMirrorManager(
+                                    context,
+                                    sourceUrl: info.apkDownloadUrl,
+                                  ),
+                                  child: Text(
+                                    '管理',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: colorScheme.primary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 4),
+                            if (!canDownloadApk)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Text(
+                                  '当前平台不支持直接安装 APK，此处仅保存线路偏好。',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    height: 1.3,
+                                  ),
+                                ),
+                              ),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest
+                                    .withValues(alpha: 0.32),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: UpdateMirrorList(
+                                sourceUrl: info.apkDownloadUrl,
+                                compact: true,
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
                   ),
-                  if (canDownloadApk && info.hasApk) ...[
-                    const SizedBox(height: 18),
-                    Row(
-                      children: [
-                        Text(
-                          '下载线路',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const Spacer(),
-                        CupertinoButton(
-                          minimumSize: Size.zero,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          onPressed: () => _openMirrorManager(
-                            context,
-                            sourceUrl: info.apkDownloadUrl,
-                          ),
-                          child: Text(
-                            '管理',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: colorScheme.primary,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
-                      decoration: BoxDecoration(
-                        color: colorScheme.surfaceContainerHighest.withValues(
-                          alpha: 0.32,
-                        ),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: UpdateMirrorList(
-                        sourceUrl: info.apkDownloadUrl,
-                        compact: true,
-                      ),
-                    ),
-                  ],
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                     child: Row(
