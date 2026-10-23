@@ -5,6 +5,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/media_detail/controllers/media_detail_service.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_service.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_mirror_store.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_speed_tester.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/ios_shared_session_service.dart';
 import 'package:moviepilot_mobile/services/ios_widget_navigation_service.dart';
@@ -43,6 +45,8 @@ Future<void> bootstrapApp() async {
     Get.put(ApiClient());
     Get.put(PlayerLaunchController.to);
     Get.put(AppUpdateService(), permanent: true);
+    Get.put(UpdateMirrorStore(), permanent: true);
+    Get.put(UpdateSpeedTester(), permanent: true);
     Get.put(MediaDetailService());
     Get.put(ImageUtil());
     // 注册 vue 模式插件适配器
