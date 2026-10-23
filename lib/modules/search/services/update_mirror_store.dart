@@ -10,11 +10,12 @@ class UpdateMirrorStore extends GetxService {
   static const String _customKey = 'app_update_mirror_custom';
 
   /// 内置常用 GitHub 加速源，均支持前缀式与占位符式拼接。
+  /// 顺序按实测下载速度排列，首个为默认候选。
   static const List<UpdateMirror> builtinMirrors = [
     UpdateMirror(
-      id: 'ghproxy',
-      label: 'ghproxy.net',
-      template: 'https://ghproxy.net/',
+      id: 'gh-proxy-org',
+      label: 'gh-proxy.org',
+      template: 'https://gh-proxy.org/',
       builtin: true,
     ),
     UpdateMirror(
@@ -30,9 +31,9 @@ class UpdateMirrorStore extends GetxService {
       builtin: true,
     ),
     UpdateMirror(
-      id: 'ghproxy-cc',
-      label: 'ghproxy.cc',
-      template: 'https://ghproxy.cc/',
+      id: 'ghproxy',
+      label: 'ghproxy.net',
+      template: 'https://ghproxy.net/',
       builtin: true,
     ),
   ];
