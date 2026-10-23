@@ -508,7 +508,8 @@ class AppSettingController extends GetxController {
                         return CupertinoButton(
                           padding: const EdgeInsets.symmetric(vertical: 11),
                           color: colorScheme.primaryContainer,
-                          onPressed: () => _showMirrorPicker(context),
+                          onPressed: () =>
+                              _showMirrorPicker(context, sourceUrl: info.apkDownloadUrl),
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
@@ -629,8 +630,11 @@ class AppSettingController extends GetxController {
     );
   }
 
-  Future<void> _showMirrorPicker(BuildContext context) async {
-    await showUpdateMirrorSheet(context);
+  Future<void> _showMirrorPicker(
+    BuildContext context, {
+    String sourceUrl = '',
+  }) async {
+    await showUpdateMirrorSheet(context, sourceUrl: sourceUrl);
   }
 
   void _showInstallDialog(AppUpdateInfo info) {

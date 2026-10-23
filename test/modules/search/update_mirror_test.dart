@@ -70,6 +70,18 @@ void main() {
         isNull,
       );
     });
+
+    test('rejects loopback and private hosts', () {
+      expect(
+        UpdateMirror.validateTemplate('http://127.0.0.1:8080/'),
+        isNotNull,
+      );
+      expect(
+        UpdateMirror.validateTemplate('http://192.168.1.10/{url}'),
+        isNotNull,
+      );
+      expect(UpdateMirror.validateTemplate('http://localhost/'), isNotNull);
+    });
   });
 
   group('UpdateMirror.labelFromTemplate', () {

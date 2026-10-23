@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:moviepilot_mobile/utils/remote_host_guard.dart';
 
 /// 自更新下载线路：直连或经 GitHub 加速源。
 @immutable
@@ -51,6 +52,9 @@ class UpdateMirror {
     }
     if (uri.scheme != 'http' && uri.scheme != 'https') {
       return '仅支持 http/https 地址';
+    }
+    if (!isSafeRemoteHost(uri.host)) {
+      return '不允许使用本机或内网地址';
     }
     if (!value.contains(urlPlaceholder) && value == sample) {
       // 前缀式：至少要有一个路径或结尾斜杠，避免误填成裸域名后拼出错误地址。

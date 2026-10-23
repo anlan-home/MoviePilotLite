@@ -192,7 +192,10 @@ class AppSettingPage extends GetView<AppSettingController> {
             icon: Icons.speed_rounded,
             iconColor: CupertinoColors.systemGreen,
             additionalInfo: controller.updateMirrorLabel,
-            onTap: () => showUpdateMirrorSheet(context),
+            onTap: () => showUpdateMirrorSheet(
+              context,
+              sourceUrl: controller.updateInfo.value?.apkDownloadUrl ?? '',
+            ),
           ),
         ),
         _buildNavigationTile(
