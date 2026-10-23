@@ -10,6 +10,7 @@ import 'package:moviepilot_mobile/modules/search/pages/update_mirror_sheet.dart'
 import 'package:moviepilot_mobile/modules/search/services/app_update_installer.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_service.dart';
 import 'package:moviepilot_mobile/modules/search/services/update_mirror_store.dart';
+import 'package:moviepilot_mobile/modules/search/widgets/update_mirror_list.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/models/app_icon_option.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
@@ -216,8 +217,6 @@ class AppSettingController extends GetxController {
     }
     return version.value;
   }
-
-  String get updateMirrorLabel => _mirrorStore.selectedMirror.label;
 
   Future<void> handleVersionTap(BuildContext context) async {
     if (!Platform.isAndroid && !Platform.isIOS) {
@@ -500,40 +499,54 @@ class AppSettingController extends GetxController {
                       ),
                     ),
                   ),
-                  if (canDownloadApk && info.hasApk)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: Obx(() {
-                        final mirror = _mirrorStore.selectedMirror;
-                        return CupertinoButton(
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          color: colorScheme.primaryContainer,
-                          onPressed: () =>
-                              _showMirrorPicker(context, sourceUrl: info.apkDownloadUrl),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.speed_rounded,
-                                size: 18,
-                                color: colorScheme.onPrimaryContainer,
-                              ),
-                              const SizedBox(width: 6),
-                              Flexible(
-                                child: Text(
-                                  '下载线路：${mirror.label}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: colorScheme.onPrimaryContainer,
-                                  ),
-                                ),
-                              ),
-                            ],
+                  if (canDownloadApk && info.hasApk) ...[
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        Text(
+                          '下载线路',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w700,
                           ),
-                        );
-                      }),
+                        ),
+                        const Spacer(),
+                        CupertinoButton(
+                          minimumSize: Size.zero,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          onPressed: () => _openMirrorManager(
+                            context,
+                            sourceUrl: info.apkDownloadUrl,
+                          ),
+                          child: Text(
+                            '管理',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 4),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest.withValues(
+                          alpha: 0.32,
+                        ),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: UpdateMirrorList(
+                        sourceUrl: info.apkDownloadUrl,
+                        compact: true,
+                      ),
+                    ),
+                  ],
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                     child: Row(
@@ -630,7 +643,7 @@ class AppSettingController extends GetxController {
     );
   }
 
-  Future<void> _showMirrorPicker(
+  Future<void> _openMirrorManager(
     BuildContext context, {
     String sourceUrl = '',
   }) async {

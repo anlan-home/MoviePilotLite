@@ -5,7 +5,6 @@ import 'package:moviepilot_mobile/gen/assets.gen.dart';
 import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
 import 'package:moviepilot_mobile/modules/dashboard/pages/edit_dashboard_page.dart';
 import 'package:moviepilot_mobile/modules/search/controllers/app_setting_controller.dart';
-import 'package:moviepilot_mobile/modules/search/pages/update_mirror_sheet.dart';
 import 'package:moviepilot_mobile/theme/section.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
@@ -176,26 +175,12 @@ class AppSettingPage extends GetView<AppSettingController> {
         Obx(
           () => _buildNavigationTile(
             context,
-            title: '当前版本',
-            subtitle: '检查版本更新',
-            icon: Icons.info_outline,
+            title: '版本更新',
+            subtitle: '检查更新、下载线路与加速源',
+            icon: Icons.system_update_alt_rounded,
             iconColor: CupertinoColors.systemBlue,
             additionalInfo: controller.updateStatusText,
             onTap: () => controller.handleVersionTap(context),
-          ),
-        ),
-        Obx(
-          () => _buildNavigationTile(
-            context,
-            title: '更新下载线路',
-            subtitle: '选择或自定义 GitHub 加速源',
-            icon: Icons.speed_rounded,
-            iconColor: CupertinoColors.systemGreen,
-            additionalInfo: controller.updateMirrorLabel,
-            onTap: () => showUpdateMirrorSheet(
-              context,
-              sourceUrl: controller.updateInfo.value?.apkDownloadUrl ?? '',
-            ),
           ),
         ),
         _buildNavigationTile(
