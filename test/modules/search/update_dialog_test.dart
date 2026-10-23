@@ -41,7 +41,6 @@ void main() {
     WidgetTester tester,
     AppUpdateInfo info, {
     bool isAndroid = true,
-    bool isIos = false,
   }) async {
     Get.put(AppLog());
     Get.put(AppService());
@@ -51,67 +50,56 @@ void main() {
     Get.put(UpdateMirrorStore(), permanent: true);
     final controller = Get.put(AppSettingController());
     controller.debugIsAndroidOverride = isAndroid;
-    controller.debugIsIosOverride = isIos;
-    await tester.pumpWidget(const GetMaterialApp(home: Scaffold(body: SizedBox())));
+    await tester.pumpWidget(
+      const GetMaterialApp(home: Scaffold(body: SizedBox())),
+    );
     await tester.pumpAndSettle();
     controller.showUpdateDialogForTest(info);
     await tester.pumpAndSettle();
     return controller;
   }
 
-  testWidgets('mirror section is shown with an update available', (tester) async {
+  testWidgets('dialog shows version info, notes and download action', (
+    tester,
+  ) async {
     await openDialog(tester, _info(newer: true));
-    expect(find.text('下载线路'), findsOneWidget);
-    expect(find.text('管理'), findsOneWidget);
-    expect(find.text('测速'), findsWidgets);
+    expect(find.text('发现新版本'), findsOneWidget);
+    expect(find.text('更新内容'), findsOneWidget);
     expect(find.text('下载更新'), findsOneWidget);
   });
 
-  testWidgets('mirror section stays reachable when already up to date', (
+  testWidgets('update dialog no longer hosts mirror selection', (
     tester,
   ) async {
-    // 合并入口后线路选择只存在于弹框内，已是最新版本时必须仍可进入。
-    await openDialog(tester, _info(newer: false));
-    expect(find.text('下载线路'), findsOneWidget);
-    expect(find.text('完成'), findsOneWidget);
-    expect(find.text('关闭'), findsOneWidget);
-    expect(find.text('下载更新'), findsNothing);
-  });
-
-  testWidgets('mirror section is shown without an apk asset', (tester) async {
-    await openDialog(tester, _info(newer: true, withApk: false));
-    expect(find.text('下载线路'), findsOneWidget);
-  });
-
-  testWidgets('mirror section sits above the release notes', (tester) async {
-    // 线路区放在更新内容之后会被长日志顶到看不见的地方。
-    await openDialog(
-      tester,
-      _info(newer: true, notes: '- 一\n- 二\n- 三\n- 四\n- 五'),
-    );
-    final mirrorY = tester.getTopLeft(find.text('下载线路')).dy;
-    final notesY = tester.getTopLeft(find.text('更新内容')).dy;
-    expect(mirrorY, lessThan(notesY));
-  });
-
-  testWidgets('iOS shows mirrors with a hint and no download action', (
-    tester,
-  ) async {
-    await openDialog(tester, _info(newer: true), isAndroid: false, isIos: true);
-    expect(find.text('下载线路'), findsOneWidget);
-    expect(find.text('测速'), findsWidgets);
-    expect(find.textContaining('仅保存线路偏好'), findsOneWidget);
-    expect(find.text('前往 Release'), findsOneWidget);
-    expect(find.text('下载更新'), findsNothing);
-  });
-
-  testWidgets('other platforms keep the mirror section hidden', (tester) async {
-    await openDialog(
-      tester,
-      _info(newer: true),
-      isAndroid: false,
-      isIos: false,
-    );
+    // 线路配置改为独立入口，更新弹框内不再包含任何线路逻辑。
+    await openDialog(tester, _info(newer: true));
     expect(find.text('下载线路'), findsNothing);
+    expect(find.text('管理'), findsNothing);
+    expect(find.text('测速'), findsNothing);
+  });
+
+  testWidgets('mirror logic stays out of the dialog without an apk asset', (
+    tester,
+  ) async {
+    await openDialog(tester, _info(newer: true, withApk: false));
+    expect(find.text('下载线路'), findsNothing);
+    expect(find.text('测速'), findsNothing);
+  });
+
+  testWidgets('up-to-date on Android keeps the toast-only behaviour', (
+    tester,
+  ) async {
+    // 线路入口独立后，无需再为「已是最新」强行弹框。
+    await openDialog(tester, _info(newer: false));
+    expect(find.text('发现新版本'), findsNothing);
+    expect(find.text('下载更新'), findsNothing);
+  });
+
+  testWidgets('iOS still opens the changelog dialog when up to date', (
+    tester,
+  ) async {
+    await openDialog(tester, _info(newer: false), isAndroid: false);
+    expect(find.text('更新内容'), findsOneWidget);
+    expect(find.text('前往 Release'), findsOneWidget);
   });
 }
