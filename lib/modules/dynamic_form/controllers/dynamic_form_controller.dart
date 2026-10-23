@@ -571,14 +571,11 @@ class DynamicFormController extends GetxController {
       final status = response.statusCode ?? 0;
       final responseMap = _extractMap(response.data);
       final responseCode = responseMap?['code'];
-      final explicitSuccess = responseMap?['success'];
       final success =
           status < 400 &&
-          (explicitSuccess is bool
-              ? explicitSuccess
-              : responseCode == null ||
-                    (responseCode is num && responseCode.toInt() == 0) ||
-                    responseCode.toString() == '0');
+          (responseCode == null ||
+              (responseCode is num && responseCode.toInt() == 0) ||
+              responseCode.toString() == '0');
       final message =
           _extractResponseMessage(response.data) ??
           (success ? '消息发送成功' : '操作失败');
