@@ -1,3 +1,5 @@
+import 'dart:collection';
+
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_files_models.dart';
@@ -10,12 +12,88 @@ import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 
 class SubscribeService extends GetxService {
-  final subscribeItems = <String, SubscribeItem?>{}.obs;
+  /// 订阅状态按 key 各自独立响应，卡片只监听自己的那一个，
+  /// 避免一条状态写入牵动整个列表重建。
+  final Map<String, Rxn<SubscribeItem>> _statusRxByKey = {};
+  final Map<String, DateTime> _statusResolvedAt = {};
+  final Set<String> _prefetchInflightKeys = {};
+  final Queue<Future<void> Function()> _prefetchQueue = Queue();
+  int _prefetchActive = 0;
+
+  /// 后台预取的并发上限；列表页一次会产生上百个状态查询，不能同时打出去
+  static const int _maxConcurrentPrefetch = 3;
+
+  /// 预取结果的有效期，过期后允许再次预取以感知其他入口的订阅变化
+  static const Duration _prefetchTtl = Duration(minutes: 10);
+
   final _apiClient = Get.find<ApiClient>();
   final _appService = Get.find<AppService>();
   final _log = Get.find<AppLog>();
   ServerApiVersionService get _serverApiVersionService =>
       Get.find<ServerApiVersionService>();
+
+  static String subscribeKeyFor(
+    String mediaKey, {
+    int? season,
+    String? title,
+  }) =>
+      '$mediaKey${season != null ? ':$season' : ''}${title != null ? ':$title' : ''}';
+
+  Rxn<SubscribeItem> subscribeStatusRx(String key) =>
+      _statusRxByKey.putIfAbsent(key, Rxn<SubscribeItem>.new);
+
+  SubscribeItem? subscribeStatusOf(String key) => _statusRxByKey[key]?.value;
+
+  void setSubscribeStatus(String key, SubscribeItem? item) {
+    subscribeStatusRx(key).value = item;
+    _statusResolvedAt[key] = DateTime.now();
+  }
+
+  void clearSubscribeStatus(String key) => setSubscribeStatus(key, null);
+
+  bool _isPrefetchFresh(String key) {
+    final resolvedAt = _statusResolvedAt[key];
+    if (resolvedAt == null) return false;
+    return DateTime.now().difference(resolvedAt) < _prefetchTtl;
+  }
+
+  /// 列表场景的后台状态预取：已有新鲜结果或正在排队的 key 直接跳过，
+  /// 其余进入限流队列串行消化。
+  void prefetchSubscribeStatus(String mediaKey, {int? season, String? title}) {
+    final key = subscribeKeyFor(mediaKey, season: season, title: title);
+    if (_isPrefetchFresh(key) || _prefetchInflightKeys.contains(key)) return;
+    _prefetchInflightKeys.add(key);
+    _prefetchQueue.add(() async {
+      try {
+        if (_isPrefetchFresh(key)) return;
+        final item = await getSubscribeMediaStatus(
+          mediaKey,
+          season: season,
+          title: title,
+        );
+        setSubscribeStatus(key, item);
+      } finally {
+        _prefetchInflightKeys.remove(key);
+      }
+    });
+    _drainPrefetchQueue();
+  }
+
+  void _drainPrefetchQueue() {
+    while (_prefetchActive < _maxConcurrentPrefetch &&
+        _prefetchQueue.isNotEmpty) {
+      final task = _prefetchQueue.removeFirst();
+      _prefetchActive++;
+      task()
+          .catchError((Object e, StackTrace st) {
+            _log.handle(e, stackTrace: st, message: '订阅状态预取失败');
+          })
+          .whenComplete(() {
+            _prefetchActive--;
+            _drainPrefetchQueue();
+          });
+    }
+  }
 
   bool _ensureCanSubscribe() {
     if (_appService.canSubscribe) return true;
@@ -33,9 +111,10 @@ class SubscribeService extends GetxService {
       season: season,
       title: title,
     );
-    final key =
-        '$mediaKey${season != null ? ':$season' : ''}${title != null ? ':$title' : ''}';
-    subscribeItems[key] = subscribeItem;
+    setSubscribeStatus(
+      subscribeKeyFor(mediaKey, season: season, title: title),
+      subscribeItem,
+    );
     return subscribeItem;
   }
 
@@ -49,8 +128,7 @@ class SubscribeService extends GetxService {
   }) async {
     try {
       final identity = MediaIdentity.parse(mediaKey);
-      final useV3 =
-          identity != null && await _serverApiVersionService.isV3();
+      final useV3 = identity != null && await _serverApiVersionService.isV3();
       final path = useV3
           ? '/api/v1/subscribe/media/${identity.id}'
           : '/api/v1/subscribe/media/$mediaKey';
@@ -241,8 +319,7 @@ class SubscribeService extends GetxService {
   }) async {
     if (!_ensureCanSubscribe()) return false;
     final identity = MediaIdentity.parse(mediaKey);
-    final useV3 =
-        identity != null && await _serverApiVersionService.isV3();
+    final useV3 = identity != null && await _serverApiVersionService.isV3();
     final response = await _apiClient.delete(
       useV3
           ? '/api/v1/subscribe/media/${identity.id}'
@@ -308,10 +385,7 @@ class SubscribeService extends GetxService {
   Future<SubscribeSubmitResp> resubscribeFromHistory(
     Map<String, dynamic> payload,
   ) {
-    return submitSubscribe(
-      payload['type']?.toString() ?? '',
-      payload: payload,
-    );
+    return submitSubscribe(payload['type']?.toString() ?? '', payload: payload);
   }
 
   /// GET /api/v1/subscribe/files/{subscribe_id}
@@ -348,9 +422,7 @@ class SubscribeService extends GetxService {
 
   MediaIdentity? _identityFromSource(String source, String? id) {
     final normalizedId = id?.trim();
-    if (normalizedId == null ||
-        normalizedId.isEmpty ||
-        normalizedId == '0') {
+    if (normalizedId == null || normalizedId.isEmpty || normalizedId == '0') {
       return null;
     }
     return MediaIdentity(source: source, id: normalizedId);
@@ -373,13 +445,15 @@ class SubscribeService extends GetxService {
     final result = Map<String, dynamic>.from(payload);
     final source = normalizeMediaSource(result['media_source']?.toString());
     final mediaId = result['media_id']?.toString().trim();
-    final currentIdentity = source != null &&
+    final currentIdentity =
+        source != null &&
             mediaId != null &&
             mediaId.isNotEmpty &&
             mediaId != '0'
         ? MediaIdentity(source: source, id: mediaId)
         : null;
-    final identity = currentIdentity ??
+    final identity =
+        currentIdentity ??
         _deriveMediaIdentity(
           mediaid: result['mediaid']?.toString(),
           tmdbid: result['tmdbid']?.toString(),
@@ -427,7 +501,9 @@ class SubscribeService extends GetxService {
         ok: ok,
         message: (message?.isNotEmpty ?? false)
             ? message!
-            : ok ? '已提交执行' : '$doingLabel失败：服务端未确认成功',
+            : ok
+            ? '已提交执行'
+            : '$doingLabel失败：服务端未确认成功',
       );
     } catch (e) {
       _log.handle(e, message: '$doingLabel异常');

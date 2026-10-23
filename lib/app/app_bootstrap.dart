@@ -5,12 +5,15 @@ import 'package:flutter/cupertino.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/media_detail/controllers/media_detail_service.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_service.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_mirror_store.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_speed_tester.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/ios_shared_session_service.dart';
 import 'package:moviepilot_mobile/services/ios_widget_navigation_service.dart';
 import 'package:moviepilot_mobile/services/jpush_service.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/hive_service.dart';
+import 'package:moviepilot_mobile/utils/frame_jank_reporter.dart';
 import 'package:moviepilot_mobile/utils/image_cache_manager.dart';
 import 'package:moviepilot_mobile/utils/image_util.dart';
 
@@ -42,6 +45,8 @@ Future<void> bootstrapApp() async {
     Get.put(ApiClient());
     Get.put(PlayerLaunchController.to);
     Get.put(AppUpdateService(), permanent: true);
+    Get.put(UpdateMirrorStore(), permanent: true);
+    Get.put(UpdateSpeedTester(), permanent: true);
     Get.put(MediaDetailService());
     Get.put(ImageUtil());
     // 注册 vue 模式插件适配器
@@ -77,9 +82,9 @@ Future<void> bootstrapApp() async {
   registerBrushFlowRenderer();
 }
 
-/// 首帧之后执行的初始化：推送 SDK 注册、APK 更新缓存清理
-/// 首帧之后执行的初始化：推送 SDK 注册、APK 更新缓存清理
+/// 首帧之后执行的初始化：慢帧诊断、推送 SDK 注册、APK 更新缓存清理
 Future<void> postLaunchInit() async {
+  FrameJankReporter.install();
   try {
     if (Get.isRegistered<JPushService>()) {
       await Get.find<JPushService>().init();

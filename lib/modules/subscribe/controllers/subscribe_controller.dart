@@ -106,11 +106,23 @@ class SubscribeController extends GetxController {
   final sortAscending = false.obs;
   int _recommendationRequestId = 0;
 
+  /// v3 执行可观测入口（活动记录/运行日志）可见性；v2 服务端隐藏，不发出 v3 请求
+  final executionEntriesVisible = false.obs;
+
   @override
   void onReady() {
     super.onReady();
     _restoreSortPreferences();
+    _resolveExecutionEntriesVisible();
     loadAll();
+  }
+
+  Future<void> _resolveExecutionEntriesVisible() async {
+    try {
+      executionEntriesVisible.value = await _versionService.isV3();
+    } catch (_) {
+      executionEntriesVisible.value = false;
+    }
   }
 
   bool get isTv => subscribeType == SubscribeType.tv;

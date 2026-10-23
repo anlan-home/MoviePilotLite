@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
+import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/mediaserver/controllers/mediaserver_controller.dart';
 import 'package:moviepilot_mobile/modules/player/controllers/player_launch_controller.dart';
@@ -35,6 +37,10 @@ class RecentlyPlayingWidget extends StatelessWidget {
     return Obx(() {
       final playingMedia = mediaServerController.playingMedia.value ?? const [];
       if (playingMedia.isEmpty) {
+        final dashboardController = Get.find<DashboardController>();
+        if (dashboardController.isWidgetLoading('继续观看')) {
+          return const DashboardPosterGridSkeleton(itemCount: 6);
+        }
         return const _EmptyState(
           icon: CupertinoIcons.play_rectangle,
           title: '暂无继续观看内容',

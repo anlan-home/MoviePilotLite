@@ -42,7 +42,10 @@ class _IndexState extends State<Index> {
   ScrollController? _activeScrollController;
   late final Future<bool> _supportsNativeGlassNavBar;
 
-  final dashboardController = Get.put(DashboardController());
+  /// 已经构建过的 Tab 下标：IndexedStack 会同时 build 与 layout 所有子页，
+  /// 只把访问过的 Tab 真正放进去，其余用占位，避免启动时五个页面一起拉数据。
+  final Set<int> _builtTabs = {};
+
   List<String> get _labels => ['仪表盘', '推荐', '探索', '更多', '搜索'];
   List<IconData> get _icons => [
     Icons.home_outlined,
@@ -79,10 +82,13 @@ class _IndexState extends State<Index> {
     if (!_initialIndexApplied) {
       _restoreSelectedIndex();
     }
-    Get.put(RecommendController());
-    Get.put(DiscoverController());
-    Get.put(MultifunctionController());
-    Get.put(SearchIndexController(), permanent: true);
+    // 控制器按需创建：首次构建对应 Tab 页（或别处首次 find）时才初始化，
+    // 它们的 onInit/onReady 都会立刻发请求，不能在启动时一起跑。
+    Get.lazyPut(() => DashboardController(), fenix: true);
+    Get.lazyPut(() => RecommendController(), fenix: true);
+    Get.lazyPut(() => DiscoverController(), fenix: true);
+    Get.lazyPut(() => MultifunctionController(), fenix: true);
+    Get.lazyPut(() => SearchIndexController(), fenix: true);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _widgetNavigationService.navigateToPendingRoute();
       _runPluginAutoBackupOnLaunch();
@@ -224,17 +230,33 @@ class _IndexState extends State<Index> {
 
   Widget _buildTabBody(int coercedIndex) {
     _activeScrollController = _tabScrollControllers[coercedIndex];
+    _builtTabs.add(coercedIndex);
     return IndexedStack(
       key: _tabBodyKey,
       index: coercedIndex,
-      children: [
-        DashboardPage(scrollController: _tabScrollControllers[0]),
-        RecommendPage(scrollController: _tabScrollControllers[1]),
-        DiscoverPage(scrollController: _tabScrollControllers[2]),
-        MultifunctionPage(scrollController: _tabScrollControllers[3]),
-        SearchIndexPage(scrollController: _tabScrollControllers[4]),
-      ],
+      children: List.generate(
+        kIndexMaxTab + 1,
+        (index) => _builtTabs.contains(index)
+            ? _buildTabPage(index)
+            : const SizedBox.shrink(),
+      ),
     );
+  }
+
+  Widget _buildTabPage(int index) {
+    final scrollController = _tabScrollControllers[index];
+    switch (index) {
+      case 0:
+        return DashboardPage(scrollController: scrollController);
+      case 1:
+        return RecommendPage(scrollController: scrollController);
+      case 2:
+        return DiscoverPage(scrollController: scrollController);
+      case 3:
+        return MultifunctionPage(scrollController: scrollController);
+      default:
+        return SearchIndexPage(scrollController: scrollController);
+    }
   }
 
   Widget _buildFloatingBottomBar(Widget body) {

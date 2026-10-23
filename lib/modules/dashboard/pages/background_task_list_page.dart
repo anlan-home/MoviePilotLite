@@ -127,6 +127,7 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
       ),
       body: Obx(() {
         final scheduleList = controller.scheduleData.value;
+        final loadError = controller.scheduleError.value;
         final filteredList = _visibleSchedules(scheduleList);
 
         final grouped = _groupByProvider(filteredList);
@@ -155,7 +156,7 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
             if (filteredList.isEmpty)
               SliverFillRemaining(
                 hasScrollBody: false,
-                child: _buildEmptyState(context),
+                child: _buildEmptyState(context, loadError),
               )
             else
               ...sections.map(
@@ -180,7 +181,9 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
     List<ScheduleModel> scheduleList,
   ) {
     final palette = DashboardPalette.of(context);
-    final running = scheduleList.where((item) => item.status == '运行中').length;
+    final running = scheduleList
+        .where(DashboardController.isScheduleRunning)
+        .length;
     final waiting = scheduleList.where((item) => item.status == '等待').length;
     final failed = scheduleList.where((item) => item.status == '失败').length;
 
@@ -528,10 +531,34 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
     }
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  Widget _buildEmptyState(BuildContext context, String? loadError) {
     final palette = DashboardPalette.of(context);
     final hasQueryOrFilter =
         _searchQuery.trim().isNotEmpty || _hasActiveFilters;
+    final isPermissionError =
+        loadError == DashboardController.schedulePermissionMessage;
+
+    final IconData icon;
+    final String title;
+    final String subtitle;
+    if (hasQueryOrFilter) {
+      icon = CupertinoIcons.search;
+      title = '未找到匹配的任务';
+      subtitle = '调整关键词或筛选条件再试试';
+    } else if (isPermissionError) {
+      icon = CupertinoIcons.lock_shield;
+      title = DashboardController.schedulePermissionMessage;
+      subtitle = '后台任务仅管理员账号可查看';
+    } else if (loadError != null) {
+      icon = CupertinoIcons.exclamationmark_triangle;
+      title = '后台任务加载失败';
+      subtitle = '$loadError，下拉可重试';
+    } else {
+      icon = CupertinoIcons.calendar_badge_minus;
+      title = '暂无后台任务数据';
+      subtitle = '任务同步后会显示在这里';
+    }
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 40),
@@ -546,17 +573,12 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
                 borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: palette.tileBorder),
               ),
-              child: Icon(
-                hasQueryOrFilter
-                    ? CupertinoIcons.search
-                    : CupertinoIcons.calendar_badge_minus,
-                color: palette.mutedText,
-                size: 26,
-              ),
+              child: Icon(icon, color: palette.mutedText, size: 26),
             ),
             const SizedBox(height: 14),
             Text(
-              hasQueryOrFilter ? '未找到匹配的任务' : '暂无后台任务数据',
+              title,
+              textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.w700,
@@ -565,7 +587,8 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
             ),
             const SizedBox(height: 6),
             Text(
-              hasQueryOrFilter ? '调整关键词或筛选条件再试试' : '任务同步后会显示在这里',
+              subtitle,
+              textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: palette.mutedText),
             ),
           ],
@@ -718,9 +741,10 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
     );
   }
 
-  /// 根据状态获取颜色
+  /// 根据状态获取颜色；服务端列表接口的运行态文案是「正在运行」
   Color _getStatusColor(String status) {
     switch (status) {
+      case '正在运行':
       case '运行中':
         return CupertinoColors.activeBlue;
       case '等待':
@@ -736,6 +760,7 @@ class _BackgroundTaskListPageState extends State<BackgroundTaskListPage> {
 
   IconData _getStatusIcon(String status) {
     switch (status) {
+      case '正在运行':
       case '运行中':
         return CupertinoIcons.time_solid;
       case '等待':

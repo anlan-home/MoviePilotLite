@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 import 'package:syncfusion_flutter_charts/charts.dart';
 import '../controllers/dashboard_controller.dart';
 
@@ -113,62 +114,56 @@ class MemoryWidget extends StatelessWidget {
       final memoryUsage = info?.usage ?? 0.0;
       final chartData = controller.memoryChartData;
 
-      return Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: palette.tileSurface,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: palette.tileBorder),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '内存',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 1.2,
-                      color: palette.faintText,
+      return Skeletonizer(
+        enabled: info == null,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: palette.tileSurface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: palette.tileBorder),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '内存',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                        color: palette.faintText,
+                      ),
                     ),
                   ),
-                ),
-                Text(
-                  '${memoryUsage.toStringAsFixed(0)}%',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: palette.mutedText,
+                  DashboardPercentPill(
+                    '${memoryUsage.toStringAsFixed(0)}%',
+                    color: palette.coolAccent,
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            SizedBox(
-              height: 30,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  SizeFormatter.formatSize(memoryUsed.toDouble(), 1),
-                  style: TextStyle(
+                ],
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 30,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: DashboardValueText(
+                    SizeFormatter.formatSize(memoryUsed.toDouble(), 1),
                     fontSize: 24,
-                    fontWeight: FontWeight.w800,
-                    color: palette.titleText,
-                    height: 1,
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 10),
-            _buildCompactTrendChart(
-              chartData: chartData,
-              color: palette.coolAccent,
-              dividerColor: palette.divider,
-            ),
-          ],
+              const SizedBox(height: 10),
+              _buildCompactTrendChart(
+                chartData: chartData,
+                color: palette.coolAccent,
+                dividerColor: palette.divider,
+              ),
+            ],
+          ),
         ),
       );
     });

@@ -289,6 +289,25 @@ class SearchIndexController extends GetxController {
   }
 
   List<SearchSuggestionItem> _buildSuggestions(String term) {
+    final appService = Get.find<AppService>();
+    return buildSuggestionsFor(
+      term,
+      canSearch: appService.canSearch,
+      canSubscribe: appService.canSubscribe,
+      canManage: appService.canManage,
+      musicSupported: musicBrowseSupported.value,
+    );
+  }
+
+  /// 按账号权限生成建议：各分类对应的落地页受路由门禁保护，
+  /// 无权限的分类不展示，避免用户点进去才被拦下。
+  static List<SearchSuggestionItem> buildSuggestionsFor(
+    String term, {
+    required bool canSearch,
+    required bool canSubscribe,
+    required bool canManage,
+    required bool musicSupported,
+  }) {
     final quoted = '"$term"';
     return [
       SearchSuggestionItem(
@@ -312,7 +331,7 @@ class SearchIndexController extends GetxController {
         subtitle: '按演员名称搜索',
         keyword: term,
       ),
-      if (musicBrowseSupported.value)
+      if (musicSupported)
         SearchSuggestionItem(
           category: SearchSuggestionCategory.music,
           leading: '音乐',
@@ -320,34 +339,38 @@ class SearchIndexController extends GetxController {
           subtitle: '音乐人、专辑与单曲',
           keyword: term,
         ),
-      SearchSuggestionItem(
-        category: SearchSuggestionCategory.share,
-        leading: '媒体',
-        title: '搜索订阅分享 $quoted',
-        subtitle: '快速查找分享/订阅',
-        keyword: term,
-      ),
-      SearchSuggestionItem(
-        category: SearchSuggestionCategory.history,
-        leading: '历史',
-        title: '历史记录 $quoted',
-        subtitle: '基于本地搜索',
-        keyword: term,
-      ),
-      SearchSuggestionItem(
-        category: SearchSuggestionCategory.subscription,
-        leading: 'TODO://订阅',
-        title: quoted,
-        subtitle: '订阅库内匹配',
-        keyword: term,
-      ),
-      SearchSuggestionItem(
-        category: SearchSuggestionCategory.site,
-        leading: '站点',
-        title: '站点搜索 $quoted',
-        subtitle: '跨站点检索',
-        keyword: term,
-      ),
+      if (canSubscribe)
+        SearchSuggestionItem(
+          category: SearchSuggestionCategory.share,
+          leading: '媒体',
+          title: '搜索订阅分享 $quoted',
+          subtitle: '快速查找分享/订阅',
+          keyword: term,
+        ),
+      if (canManage)
+        SearchSuggestionItem(
+          category: SearchSuggestionCategory.history,
+          leading: '历史',
+          title: '历史记录 $quoted',
+          subtitle: '基于本地搜索',
+          keyword: term,
+        ),
+      if (canSubscribe)
+        SearchSuggestionItem(
+          category: SearchSuggestionCategory.subscription,
+          leading: '订阅',
+          title: quoted,
+          subtitle: '订阅库内匹配',
+          keyword: term,
+        ),
+      if (canSearch)
+        SearchSuggestionItem(
+          category: SearchSuggestionCategory.site,
+          leading: '站点',
+          title: '站点搜索 $quoted',
+          subtitle: '跨站点检索',
+          keyword: term,
+        ),
     ];
   }
 

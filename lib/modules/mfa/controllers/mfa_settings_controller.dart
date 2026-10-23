@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:get/get.dart' hide Response;
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
+import 'package:moviepilot_mobile/services/api_auth_failure.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 
@@ -137,7 +138,9 @@ class MfaSettingsController extends GetxController {
         enabled = raw['is_otp'] as bool;
       } else {
         final username = _appService.loginResponse?.userName.trim() ?? '';
-        if (username.isEmpty) throw StateError('无法获取当前用户名，请重新登录');
+        if (username.isEmpty) {
+          throw StateError(ApiAuthFailure.notLoggedInMessage);
+        }
         final response = await _apiClient.get<dynamic>(
           '/api/v1/mfa/status/${Uri.encodeComponent(username)}',
           skipV3EnvelopeUnwrap: true,

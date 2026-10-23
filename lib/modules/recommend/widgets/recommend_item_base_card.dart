@@ -30,7 +30,7 @@ class RecommendItemBaseCard extends GetView<SubscribeService> {
           ? child
           : Obx(() {
               final subscribeItem =
-                  controller.subscribeItems[item?.subscribeKey];
+                  controller.subscribeStatusRx(item!.subscribeKey).value;
               final isSubscribed =
                   subscribeItem != null && subscribeItem.id != null;
               final appService = Get.find<AppService>();
@@ -214,7 +214,7 @@ class RecommendItemBaseCard extends GetView<SubscribeService> {
           final showEditSnack =
               ok && !isSubscribed && isTv && subscribeId != null;
           if (ok && isSubscribed) {
-            controller.subscribeItems[subscribeKey] = null;
+            controller.clearSubscribeStatus(subscribeKey);
           }
           if (ok && !isSubscribed) {
             controller.fetchAndSaveSubscribeStatus(

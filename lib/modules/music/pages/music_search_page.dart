@@ -194,7 +194,22 @@ class _MusicSearchTile extends StatelessWidget {
         args['title'] = item.displayTitle;
         Get.toNamed('/music/album', arguments: args);
       default:
-        ToastUtil.info('单曲暂不支持直接打开，可在音乐库中浏览所属专辑');
+        // 单曲详情会按 recognize 结果自行补全所属专辑；缺少标准 ID 时退回专辑。
+        if (item.mediaId.isEmpty) {
+          if (item.albumId?.isNotEmpty == true) {
+            args['mediaId'] = item.albumId!;
+            args['title'] = item.album ?? item.displayTitle;
+            Get.toNamed('/music/album', arguments: args);
+            return;
+          }
+          ToastUtil.info('该单曲缺少可用标识，暂时无法打开');
+          return;
+        }
+        args['title'] = item.displayTitle;
+        if (item.displayArtist.isNotEmpty) {
+          args['artist'] = item.displayArtist;
+        }
+        Get.toNamed('/music/detail', arguments: args);
     }
   }
 }

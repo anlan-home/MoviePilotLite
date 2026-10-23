@@ -60,8 +60,14 @@ import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_popula
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_share_controller.dart';
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_calendar_controller.dart';
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_share_statistics_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_activity_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_activity_detail_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_logs_controller.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_activity_detail_page.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_activity_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_calendar_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_history_page.dart';
+import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_logs_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_popular_page.dart';
 import 'package:moviepilot_mobile/modules/subscribe/pages/subscribe_share_page.dart';
@@ -83,6 +89,7 @@ import 'package:moviepilot_mobile/modules/music/controllers/music_search_control
 import 'package:moviepilot_mobile/modules/music/pages/music_album_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_artist_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_library_page.dart';
+import 'package:moviepilot_mobile/modules/music/pages/music_recording_page.dart';
 import 'package:moviepilot_mobile/modules/music/pages/music_search_page.dart';
 import 'package:moviepilot_mobile/modules/mfa/controllers/mfa_settings_controller.dart';
 import 'package:moviepilot_mobile/modules/mfa/pages/mfa_settings_page.dart';
@@ -275,6 +282,8 @@ List<GetPage> buildAppPages() => [
         c.year = args['year'] ?? '';
         c.season = args['season'];
         c.mtype = args['mtype'] ?? 'movie';
+        final musicType = args['music_type']?.trim() ?? '';
+        c.musicType = musicType.isEmpty ? null : musicType;
         c.searchText.value = args['title'] ?? '';
         c.prefillTitle = args['title'];
         c.prefillBackdrop = args['backdrop'] ?? args['backdrop_path'];
@@ -459,6 +468,52 @@ List<GetPage> buildAppPages() => [
     middlewares: permissionGuards('/subscribe-edit'),
   ),
   GetPage(
+    name: '/subscribe-activity',
+    page: () => const SubscribeActivityPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeActivityController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          subscribeTitle: args?['title']?.toString() ?? '',
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-activity'),
+  ),
+  GetPage(
+    name: '/subscribe-activity-detail',
+    page: () => const SubscribeActivityDetailPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeActivityDetailController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          eventId: args?['event_id']?.toString() ?? '',
+          history: args?['history'] == true,
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-activity-detail'),
+  ),
+  GetPage(
+    name: '/subscribe-logs',
+    page: () => const SubscribeLogsPage(),
+    binding: BindingsBuilder(() {
+      final args = Get.arguments is Map ? Get.arguments as Map : null;
+      Get.put(
+        SubscribeLogsController(
+          subscribeId: int.tryParse('${args?['id'] ?? ''}') ?? 0,
+          subscribeTitle: args?['title']?.toString() ?? '',
+        ),
+        permanent: false,
+      );
+    }),
+    middlewares: permissionGuards('/subscribe-logs'),
+  ),
+  GetPage(
     name: '/media-organize',
     page: () => const MediaOrganizePage(),
     binding: BindingsBuilder(() {
@@ -511,6 +566,14 @@ List<GetPage> buildAppPages() => [
       Get.put(MusicAlbumController(), permanent: false);
     }),
     middlewares: permissionGuards('/music/album'),
+  ),
+  GetPage(
+    name: '/music/detail',
+    page: () => const MusicRecordingPage(),
+    binding: BindingsBuilder(() {
+      Get.put(MusicRecordingController(), permanent: false);
+    }),
+    middlewares: permissionGuards('/music/detail'),
   ),
   GetPage(
     name: '/music/search',

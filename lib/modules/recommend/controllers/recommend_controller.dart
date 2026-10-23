@@ -212,7 +212,10 @@ class RecommendController extends GetxController {
   Future<void> _requestQueue = Future.value();
   final _pendingKeys = <String>{};
   final Map<String, DateTime> _lastFetchAt = {};
-  bool _cookieRefreshTriggered = false;
+
+  /// 进行中的 Cookie 刷新。冷启动时多个分区会并发触发刷新，
+  /// 共享同一个 Future，所有调用方都等到刷新真正完成再发请求。
+  Future<void>? _cookieRefresh;
 
   List<RecommendCategory> get visibleCategories => _visibleCategories;
 
@@ -236,7 +239,6 @@ class RecommendController extends GetxController {
   void onClose() {
     categoryPageController.dispose();
     _bannerPageController?.dispose();
-    _trimInactiveDecodedImages();
     super.onClose();
   }
 
@@ -253,13 +255,20 @@ class RecommendController extends GetxController {
     ever(selectedCategory, (_) {
       if (!_appService.canDiscovery) return;
       prefetchAllVisibleCategories(forceRefresh: true);
+      _prefetchSubscribeStatusesForCurrentCategory();
     });
   }
 
-  Future<void> ensureUserCookieRefreshed() async {
-    if (_cookieRefreshTriggered) return;
-    _cookieRefreshTriggered = true;
-    await _refreshUserCookie();
+  /// 确保用户 Cookie 已就绪。并发调用方共享同一次刷新并一起等待它完成——
+  /// 豆瓣等来源不带 Cookie 时服务端会返回空列表，所以首个请求就必须带上。
+  Future<void> ensureUserCookieRefreshed() {
+    final pending = _cookieRefresh;
+    if (pending != null) return pending;
+    final future = _refreshUserCookie().whenComplete(() {
+      _cookieRefresh = null;
+    });
+    _cookieRefresh = future;
+    return future;
   }
 
   Future<void> _refreshUserCookie() async {
@@ -278,8 +287,6 @@ class RecommendController extends GetxController {
       );
     } catch (e, st) {
       _log.handle(e, stackTrace: st, message: '刷新推荐 Cookie 失败');
-    } finally {
-      _cookieRefreshTriggered = false;
     }
     return;
   }
@@ -317,6 +324,17 @@ class RecommendController extends GetxController {
     return isLoadingByKey[key] ?? false;
   }
 
+  /// 该分组是否还没有任何结果（既没有缓存条目，也没有已记录的失败）。
+  /// 首屏用它判断该画骨架而不是空白。
+  bool isAwaitingFirstResult(String subCategory) {
+    if (!_appService.canDiscovery) return false;
+    final key = keyForSubCategory(subCategory);
+    if (key == null) return false;
+    if (errorByKey[key] != null) return false;
+    // 请求成功但确实返回空列表时也算「已有结果」，否则骨架会一直挂着不消失
+    return !itemsByKey.containsKey(key);
+  }
+
   String? errorForSubCategory(String subCategory) {
     final key = keyForSubCategory(subCategory);
     if (key == null) return null;
@@ -342,7 +360,8 @@ class RecommendController extends GetxController {
 
   void prefetchCurrentCategory({bool forceRefresh = false}) {
     if (!_appService.canDiscovery) return;
-    _refreshUserCookie();
+    // 预热 Cookie；入队后的请求自身会等待这次刷新完成
+    unawaited(ensureUserCookieRefreshed());
     for (final subCategory in currentSubCategories) {
       ensureSubCategoryLoaded(subCategory, forceRefresh: forceRefresh);
     }
@@ -350,14 +369,11 @@ class RecommendController extends GetxController {
 
   void prefetchAllVisibleCategories({bool forceRefresh = false}) {
     if (!_appService.canDiscovery) return;
-    _refreshUserCookie();
+    // 预热 Cookie；入队后的请求自身会等待这次刷新完成
+    unawaited(ensureUserCookieRefreshed());
     for (final subCategory in allVisibleSubCategories) {
       ensureSubCategoryLoaded(subCategory, forceRefresh: forceRefresh);
     }
-  }
-
-  void _trimInactiveDecodedImages() {
-    PaintingBinding.instance.imageCache.clear();
   }
 
   bool isCategoryVisible(RecommendCategory category) {
@@ -597,6 +613,9 @@ class RecommendController extends GetxController {
     errorByKey.refresh();
 
     try {
+      // 先等 Cookie 就绪再请求：冷启动时 AppService 里还没有 Cookie，
+      // 抢先发出去会拿到「成功但空列表」，表现为首屏没数据、刷新才有。
+      await ensureUserCookieRefreshed();
       final url = RecommendSource.resolveApiPath(key);
       final response = await _apiClient.get<dynamic>(url);
       final statusCode = response.statusCode ?? 0;
@@ -610,15 +629,15 @@ class RecommendController extends GetxController {
       final category = _categoryForSubCategory(subCategory);
       final fallbackMediaType = category?.label ?? '电影';
       final items = _parseItems(list, fallbackMediaType: fallbackMediaType);
-      await ensureUserCookieRefreshed();
 
       itemsByKey[key] = items;
       itemsByKey.refresh();
-      _trimInactiveDecodedImages();
       _lastFetchAt[key] = DateTime.now();
       unawaited(Get.find<SearchKeywordHintsService>().ingestFromItems(items));
-      for (final item in items) {
-        _fetchItemsSubscribeStatus(item);
+      // 订阅状态只为当前展示的分类预取；其余分类等切换过去再补，
+      // 避免启动时为所有榜单的每一条都打一个请求。
+      if (currentSubCategories.contains(subCategory)) {
+        _prefetchSubscribeStatuses(items);
       }
     } catch (e, st) {
       _log.handle(e, stackTrace: st, message: '推荐数据请求异常');
@@ -710,11 +729,20 @@ class RecommendController extends GetxController {
     return null;
   }
 
-  _fetchItemsSubscribeStatus(RecommendApiItem item) {
-    subscribeService.fetchAndSaveSubscribeStatus(
-      item.mediaKey,
-      season: item.season,
-      title: item.title,
-    );
+  void _prefetchSubscribeStatuses(Iterable<RecommendApiItem> items) {
+    for (final item in items) {
+      subscribeService.prefetchSubscribeStatus(
+        item.mediaKey,
+        season: item.season,
+        title: item.title,
+      );
+    }
+  }
+
+  /// 为当前分类下已加载的榜单补齐订阅状态；已有新鲜结果的 key 会被服务层跳过
+  void _prefetchSubscribeStatusesForCurrentCategory() {
+    for (final subCategory in currentSubCategories) {
+      _prefetchSubscribeStatuses(itemsForSubCategory(subCategory));
+    }
   }
 }

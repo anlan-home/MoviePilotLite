@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 
-import 'package:flutter/painting.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/discover/defines/discover_filter_defines.dart';
@@ -122,12 +121,6 @@ class DiscoverController extends GetxController {
       if (!selectedSource.value.isDynamic) return;
       loadCurrent(forceRefresh: true);
     });
-  }
-
-  @override
-  void onClose() {
-    _trimInactiveDecodedImages();
-    super.onClose();
   }
 
   void selectSource(DiscoverSourceEntry source) {
@@ -433,7 +426,6 @@ class DiscoverController extends GetxController {
       ensureUserCookieRefreshed();
       itemsByKey[key] = items;
       itemsByKey.refresh();
-      _trimInactiveDecodedImages();
       _lastFetchAt[key] = DateTime.now();
       unawaited(Get.find<SearchKeywordHintsService>().ingestFromItems(items));
     } catch (e, st) {
@@ -449,10 +441,6 @@ class DiscoverController extends GetxController {
     final last = _lastFetchAt[key];
     if (last == null) return true;
     return DateTime.now().difference(last) >= _minRefreshInterval;
-  }
-
-  void _trimInactiveDecodedImages() {
-    PaintingBinding.instance.imageCache.clear();
   }
 
   bool _shouldForceRefresh(String key) {

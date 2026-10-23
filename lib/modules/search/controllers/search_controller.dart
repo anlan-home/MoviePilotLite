@@ -36,6 +36,11 @@ class SearchMediaController extends GetxController {
   var year = '';
   String? season;
   var sites = <int>[];
+
+  /// 音乐实体的具体类型（recording / album）；非音乐搜索留空。
+  /// v3 的媒体搜索按它区分单曲与专辑，并据此返回候选资源。
+  String? musicType;
+
   late SearchType searchType;
 
   /// 本轮流式搜索的 HTTP 状态(失败时用于区分"流式失败"与"本地失败")
@@ -342,6 +347,7 @@ class SearchMediaController extends GetxController {
         'sites': sites.join(','),
         if (season != null && season!.isNotEmpty && season != '0')
           'season': season!,
+        if (musicType != null) 'music_type': musicType!,
       };
 
   /// 媒体搜索的候选请求形态(按优先级):
@@ -470,6 +476,7 @@ class SearchMediaController extends GetxController {
       return {
         if (searchText.value.isNotEmpty) 'keyword': searchText.value,
         'sites': sites.join(','),
+        if (musicType != null) 'music_type': musicType!,
       };
     }
     return {
@@ -480,6 +487,7 @@ class SearchMediaController extends GetxController {
       'sites': sites.join(','),
       if (season != null && season!.isNotEmpty && season != '0')
         'season': season!,
+      if (musicType != null) 'music_type': musicType!,
     };
   }
 
@@ -623,6 +631,11 @@ class SearchMediaController extends GetxController {
       'keyword': searchText.value,
       if (season != null && season!.isNotEmpty && season != '0')
         'season': season!,
+      if (musicType != null) ...{
+        'music_type': musicType!,
+        // v3 音乐资源搜索会额外返回待确认候选，便于按匹配度筛选。
+        'include_candidates': 'true',
+      },
     };
 
     final forms = searchType == SearchType.media

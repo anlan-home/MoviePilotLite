@@ -1,13 +1,16 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/search/models/app_update_info.dart';
+import 'package:moviepilot_mobile/modules/search/pages/update_mirror_sheet.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_installer.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_service.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_mirror_store.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/models/app_icon_option.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
@@ -34,6 +37,7 @@ class AppSettingController extends GetxController {
   final downloadedApkPath = RxnString();
   CancelToken? _downloadCancelToken;
   late final AppUpdateService _updateService;
+  late final UpdateMirrorStore _mirrorStore;
 
   // 背景图设置
   final backgroundImageEnabled = false.obs;
@@ -69,6 +73,9 @@ class AppSettingController extends GetxController {
     _updateService = Get.isRegistered<AppUpdateService>()
         ? Get.find<AppUpdateService>()
         : Get.put(AppUpdateService(), permanent: true);
+    _mirrorStore = Get.isRegistered<UpdateMirrorStore>()
+        ? Get.find<UpdateMirrorStore>()
+        : Get.put(UpdateMirrorStore(), permanent: true);
 
     // 监听变化
     ever(
@@ -211,6 +218,8 @@ class AppSettingController extends GetxController {
     return version.value;
   }
 
+  String get updateMirrorLabel => _mirrorStore.selectedMirror.label;
+
   Future<void> handleVersionTap(BuildContext context) async {
     if (!Platform.isAndroid && !Platform.isIOS) {
       ToastUtil.info('当前平台暂不支持检查更新');
@@ -251,18 +260,26 @@ class AppSettingController extends GetxController {
       }
       _showUpdateDialog(info);
     } on AppUpdateException catch (e) {
-      ToastUtil.error(e.message);
+      // 拉取失败往往正是加速源不可用所致，必须仍能进入线路设置自救。
+      ToastUtil.error(e.message, mainButtonText: '配置加速源', onMainButtonPressed: _openMirrorManagerFromToast);
     } catch (_) {
-      ToastUtil.error('检查更新失败，请稍后重试');
+      ToastUtil.error('检查更新失败，请稍后重试', mainButtonText: '配置加速源', onMainButtonPressed: _openMirrorManagerFromToast);
     } finally {
       isCheckingUpdate.value = false;
     }
   }
 
-  Future<void> downloadLatestApk(
-    AppUpdateInfo info, {
-    bool useProxy = false,
-  }) async {
+  /// 从提示条直接打开线路管理，用于检查更新失败后的自救入口。
+  void _openMirrorManagerFromToast() {
+    final context = Get.context;
+    if (context == null) return;
+    _openMirrorManager(
+      context,
+      sourceUrl: updateInfo.value?.apkDownloadUrl ?? '',
+    );
+  }
+
+  Future<void> downloadLatestApk(AppUpdateInfo info) async {
     if (isDownloadingUpdate.value) {
       _showDownloadProgressSheet();
       return;
@@ -272,6 +289,8 @@ class AppSettingController extends GetxController {
       return;
     }
 
+    await _mirrorStore.ensureLoaded();
+    final mirror = _mirrorStore.selectedMirror;
     isDownloadingUpdate.value = true;
     downloadProgress.value = 0;
     downloadedApkPath.value = null;
@@ -280,7 +299,7 @@ class AppSettingController extends GetxController {
     try {
       final path = await _updateService.downloadApk(
         info,
-        useProxy: useProxy,
+        mirror: mirror,
         cancelToken: _downloadCancelToken,
         onProgress: (received, total) {
           if (total > 0) {
@@ -347,8 +366,20 @@ class AppSettingController extends GetxController {
     }
   }
 
+  /// 仅测试使用：覆盖平台判断，验证各平台下的内容与按钮。
+  @visibleForTesting
+  /// 仅测试使用：覆盖 Android 平台判断。
+  @visibleForTesting
+  bool? debugIsAndroidOverride;
+
+  /// 仅测试使用：直接打开更新弹框。
+  @visibleForTesting
+  void showUpdateDialogForTest(AppUpdateInfo info) => _showUpdateDialog(info);
+
+  bool get _isAndroid => debugIsAndroidOverride ?? Platform.isAndroid;
+
   void _showUpdateDialog(AppUpdateInfo info) {
-    final canDownloadApk = Platform.isAndroid;
+    final canDownloadApk = _isAndroid;
     final size = info.apkSize == null
         ? ''
         : SizeFormatter.formatSize(info.apkSize!.toDouble());
@@ -493,24 +524,6 @@ class AppSettingController extends GetxController {
                       ),
                     ),
                   ),
-                  if (canDownloadApk && info.hasApk)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: CupertinoButton(
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        color: colorScheme.primaryContainer,
-                        onPressed: () {
-                          Get.back();
-                          downloadLatestApk(info, useProxy: true);
-                        },
-                        child: Text(
-                          '加速下载（ghproxy.net）',
-                          style: TextStyle(
-                            color: colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                      ),
-                    ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                     child: Row(
@@ -521,7 +534,7 @@ class AppSettingController extends GetxController {
                             color: colorScheme.surfaceContainerHighest,
                             onPressed: Get.back,
                             child: Text(
-                              '稍后',
+                              info.isNewer ? '稍后' : '关闭',
                               style: TextStyle(color: colorScheme.onSurface),
                             ),
                           ),
@@ -533,17 +546,19 @@ class AppSettingController extends GetxController {
                             color: colorScheme.primary,
                             onPressed: () {
                               Get.back();
-                              if (canDownloadApk) {
-                                downloadLatestApk(info);
-                              } else {
+                              if (!canDownloadApk) {
                                 WebUtil.open(
                                   url: info.releaseUrl,
                                   internal: false,
                                 );
+                              } else if (info.isNewer) {
+                                downloadLatestApk(info);
                               }
                             },
                             child: Text(
-                              canDownloadApk ? '下载更新' : '前往 Release',
+                              canDownloadApk
+                                  ? (info.isNewer ? '下载更新' : '完成')
+                                  : '前往 Release',
                               style: TextStyle(color: colorScheme.onPrimary),
                             ),
                           ),
@@ -605,6 +620,13 @@ class AppSettingController extends GetxController {
         ],
       ),
     );
+  }
+
+  Future<void> _openMirrorManager(
+    BuildContext context, {
+    String sourceUrl = '',
+  }) async {
+    await showUpdateMirrorSheet(context, sourceUrl: sourceUrl);
   }
 
   void _showInstallDialog(AppUpdateInfo info) {
