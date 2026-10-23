@@ -11,7 +11,11 @@ import 'package:moviepilot_mobile/services/hive_service.dart';
 import 'package:moviepilot_mobile/services/ios_shared_session_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-AppUpdateInfo _info({required bool newer, bool withApk = true}) => AppUpdateInfo(
+AppUpdateInfo _info({
+  required bool newer,
+  bool withApk = true,
+  String notes = '- fix something',
+}) => AppUpdateInfo(
   currentVersion: '1.2.6',
   currentBuildNumber: 1,
   latestVersion: newer ? '1.2.7' : '1.2.6',
@@ -19,7 +23,7 @@ AppUpdateInfo _info({required bool newer, bool withApk = true}) => AppUpdateInfo
   tagName: 'release-v1.2.6',
   releaseName: 'v1.2.6',
   releaseUrl: 'https://github.com/singleton-altman/MoviePilotLite/releases',
-  releaseNotes: '- fix something',
+  releaseNotes: notes,
   apkDownloadUrl: withApk ? 'https://github.com/x/a.apk' : '',
   apkAssetName: withApk ? 'a.apk' : '',
   apkSize: withApk ? 1024 : null,
@@ -77,6 +81,17 @@ void main() {
   testWidgets('mirror section is shown without an apk asset', (tester) async {
     await openDialog(tester, _info(newer: true, withApk: false));
     expect(find.text('下载线路'), findsOneWidget);
+  });
+
+  testWidgets('mirror section sits above the release notes', (tester) async {
+    // 线路区放在更新内容之后会被长日志顶到看不见的地方。
+    await openDialog(
+      tester,
+      _info(newer: true, notes: '- 一\n- 二\n- 三\n- 四\n- 五'),
+    );
+    final mirrorY = tester.getTopLeft(find.text('下载线路')).dy;
+    final notesY = tester.getTopLeft(find.text('更新内容')).dy;
+    expect(mirrorY, lessThan(notesY));
   });
 
   testWidgets('iOS shows mirrors with a hint and no download action', (

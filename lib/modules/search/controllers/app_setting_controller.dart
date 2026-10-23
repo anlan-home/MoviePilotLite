@@ -219,6 +219,8 @@ class AppSettingController extends GetxController {
     return version.value;
   }
 
+  String get updateMirrorLabel => _mirrorStore.selectedMirror.label;
+
   Future<void> handleVersionTap(BuildContext context) async {
     if (!Platform.isAndroid && !Platform.isIOS) {
       ToastUtil.info('当前平台暂不支持检查更新');
@@ -260,12 +262,23 @@ class AppSettingController extends GetxController {
       }
       _showUpdateDialog(info);
     } on AppUpdateException catch (e) {
-      ToastUtil.error(e.message);
+      // 拉取失败往往正是加速源不可用所致，必须仍能进入线路设置自救。
+      ToastUtil.error(e.message, mainButtonText: '配置加速源', onMainButtonPressed: _openMirrorManagerFromToast);
     } catch (_) {
-      ToastUtil.error('检查更新失败，请稍后重试');
+      ToastUtil.error('检查更新失败，请稍后重试', mainButtonText: '配置加速源', onMainButtonPressed: _openMirrorManagerFromToast);
     } finally {
       isCheckingUpdate.value = false;
     }
+  }
+
+  /// 从提示条直接打开线路管理，用于检查更新失败后的自救入口。
+  void _openMirrorManagerFromToast() {
+    final context = Get.context;
+    if (context == null) return;
+    _openMirrorManager(
+      context,
+      sourceUrl: updateInfo.value?.apkDownloadUrl ?? '',
+    );
   }
 
   Future<void> downloadLatestApk(AppUpdateInfo info) async {
@@ -480,41 +493,6 @@ class AppSettingController extends GetxController {
                                 ),
                             ],
                           ),
-                          if (notes.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '更新内容',
-                              style: theme.textTheme.titleSmall?.copyWith(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(14),
-                              decoration: BoxDecoration(
-                                color: colorScheme.surfaceContainerHighest
-                                    .withValues(alpha: 0.42),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: colorScheme.outlineVariant.withValues(
-                                    alpha: 0.5,
-                                  ),
-                                ),
-                              ),
-                              child: MarkdownBody(
-                                data: notes,
-                                selectable: true,
-                                styleSheet: MarkdownStyleSheet.fromTheme(theme)
-                                    .copyWith(
-                                      p: theme.textTheme.bodyMedium?.copyWith(
-                                        height: 1.45,
-                                      ),
-                                      listBullet: theme.textTheme.bodyMedium,
-                                    ),
-                              ),
-                            ),
-                          ],
                           if (canSelectMirror) ...[
                             const SizedBox(height: 18),
                             Row(
@@ -570,6 +548,41 @@ class AppSettingController extends GetxController {
                               child: UpdateMirrorList(
                                 sourceUrl: info.apkDownloadUrl,
                                 compact: true,
+                              ),
+                            ),
+                          ],
+                          if (notes.isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              '更新内容',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: colorScheme.surfaceContainerHighest
+                                    .withValues(alpha: 0.42),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: colorScheme.outlineVariant.withValues(
+                                    alpha: 0.5,
+                                  ),
+                                ),
+                              ),
+                              child: MarkdownBody(
+                                data: notes,
+                                selectable: true,
+                                styleSheet: MarkdownStyleSheet.fromTheme(theme)
+                                    .copyWith(
+                                      p: theme.textTheme.bodyMedium?.copyWith(
+                                        height: 1.45,
+                                      ),
+                                      listBullet: theme.textTheme.bodyMedium,
+                                    ),
                               ),
                             ),
                           ],
