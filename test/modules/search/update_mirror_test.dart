@@ -50,7 +50,13 @@ void main() {
     });
 
     test('rejects a bare host without slash or placeholder', () {
-      expect(UpdateMirror.validateTemplate('https://example.com'), isNotNull);
+      // 裸域名是合法写法，会被规整为带斜杠的前缀式；仅拒绝无法解析的输入。
+      expect(UpdateMirror.validateTemplate('https://example.com'), isNull);
+    });
+
+    test('accepts a host without scheme', () {
+      expect(UpdateMirror.validateTemplate('ghproxy.net'), isNull);
+      expect(UpdateMirror.validateTemplate('ghproxy.net/'), isNull);
     });
 
     test('accepts prefix style with trailing slash', () {
@@ -97,6 +103,53 @@ void main() {
         UpdateMirror.labelFromTemplate('https://mirror.dev/{url}'),
         'mirror.dev',
       );
+    });
+  });
+
+  group('UpdateMirror.normalizeTemplate', () {
+    test('adds a trailing slash to a bare host', () {
+      expect(
+        UpdateMirror.normalizeTemplate('https://ghproxy.net'),
+        'https://ghproxy.net/',
+      );
+    });
+
+    test('adds the https scheme when missing', () {
+      expect(
+        UpdateMirror.normalizeTemplate('ghproxy.net'),
+        'https://ghproxy.net/',
+      );
+      expect(
+        UpdateMirror.normalizeTemplate('ghproxy.net/'),
+        'https://ghproxy.net/',
+      );
+    });
+
+    test('keeps a path template intact', () {
+      expect(
+        UpdateMirror.normalizeTemplate('https://x.dev/proxy'),
+        'https://x.dev/proxy',
+      );
+    });
+
+    test('keeps placeholder templates intact', () {
+      expect(
+        UpdateMirror.normalizeTemplate('https://x.dev/?u={url}'),
+        'https://x.dev/?u={url}',
+      );
+    });
+
+    test('trims surrounding whitespace', () {
+      expect(
+        UpdateMirror.normalizeTemplate('  https://ghproxy.net/  '),
+        'https://ghproxy.net/',
+      );
+    });
+
+    test('returns null for rejected input', () {
+      expect(UpdateMirror.normalizeTemplate('localhost'), isNull);
+      expect(UpdateMirror.normalizeTemplate('ftp://x.dev/'), isNull);
+      expect(UpdateMirror.normalizeTemplate('   '), isNull);
     });
   });
 

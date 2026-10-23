@@ -53,6 +53,20 @@ void main() {
     expect(reloaded.selectedId.value, added.id);
   });
 
+  test('custom mirror input is normalized before saving', () async {
+    final store = UpdateMirrorStore();
+    await store.load();
+    final added = await store.addCustom('mirror.dev');
+    expect(added?.template, 'https://mirror.dev/');
+    expect(added?.label, 'mirror.dev');
+  });
+
+  test('duplicate templates are normalized before comparison', () async {
+    final store = UpdateMirrorStore();
+    await store.load();
+    expect(await store.addCustom('ghproxy.net'), isNull);
+  });
+
   test('duplicate templates are rejected', () async {
     final store = UpdateMirrorStore();
     await store.load();

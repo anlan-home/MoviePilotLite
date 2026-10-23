@@ -42,9 +42,34 @@ class UpdateMirror {
   }
 
   /// 校验用户输入，返回错误文案；合法时返回 null。
-  static String? validateTemplate(String raw) {
+  static String? validateTemplate(String raw) => _templateError(raw);
+
+  /// 把用户输入规整成可直接保存的前缀式模板；非法时返回 null。
+  ///
+  /// 用户常见的写法差异（缺协议、裸域名、多余空格）在这里统一补全，
+  /// 避免「能拼出正确地址却被判非法」。
+  static String? normalizeTemplate(String raw) {
     final value = raw.trim();
+    if (value.isEmpty) return null;
+    if (_templateError(value) != null) return null;
+    if (value.contains(urlPlaceholder)) return value;
+    final withScheme = _hasScheme(value) ? value : 'https://$value';
+    final uri = Uri.tryParse(withScheme);
+    if (uri == null || uri.host.isEmpty) return null;
+    // 前缀式：没有路径时补结尾斜杠，保证拼接结果不带多余分隔。
+    if (uri.path.isEmpty && !withScheme.endsWith('/')) return '$withScheme/';
+    return withScheme;
+  }
+
+  static bool _hasScheme(String value) =>
+      RegExp(r'^[a-zA-Z][a-zA-Z0-9+.\-]*://').hasMatch(value);
+
+  static String? _templateError(String raw) {
+    var value = raw.trim();
     if (value.isEmpty) return '请输入加速源地址';
+    if (!value.contains(urlPlaceholder) && !_hasScheme(value)) {
+      value = 'https://$value';
+    }
     final sample = value.replaceAll(urlPlaceholder, 'https://example.com/a.apk');
     final uri = Uri.tryParse(sample);
     if (uri == null || !uri.hasScheme || uri.host.isEmpty) {
@@ -56,12 +81,8 @@ class UpdateMirror {
     if (!isSafeRemoteHost(uri.host)) {
       return '不允许使用本机或内网地址';
     }
-    if (!value.contains(urlPlaceholder) && value == sample) {
-      // 前缀式：至少要有一个路径或结尾斜杠，避免误填成裸域名后拼出错误地址。
-      if (!value.endsWith('/') && uri.path.isEmpty) {
-        return '前缀式加速源请以 / 结尾，或使用 {url} 占位符';
-      }
-    }
+    if (value.contains(urlPlaceholder)) return null;
+    // 前缀式：裸主机名或单段路径都能拼接，其余交给 normalizeTemplate 补斜杠。
     return null;
   }
 
@@ -69,7 +90,8 @@ class UpdateMirror {
   static String labelFromTemplate(String raw) {
     final value = raw.trim();
     final sample = value.replaceAll(urlPlaceholder, '');
-    final uri = Uri.tryParse(sample);
+    final withScheme = _hasScheme(sample) ? sample : 'https://$sample';
+    final uri = Uri.tryParse(withScheme);
     final host = uri?.host ?? '';
     return host.isEmpty ? value : host;
   }

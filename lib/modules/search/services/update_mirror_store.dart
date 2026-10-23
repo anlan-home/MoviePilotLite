@@ -95,7 +95,8 @@ class UpdateMirrorStore extends GetxService {
     await ensureLoaded();
     final error = UpdateMirror.validateTemplate(template);
     if (error != null) return null;
-    final normalized = template.trim();
+    final normalized = UpdateMirror.normalizeTemplate(template);
+    if (normalized == null) return null;
     final exists = allMirrors.any(
       (mirror) => !mirror.isDirect && mirror.template.trim() == normalized,
     );

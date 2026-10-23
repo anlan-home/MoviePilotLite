@@ -482,10 +482,22 @@ class _UpdateMirrorSheetState extends State<UpdateMirrorSheet> {
       ToastUtil.error(error);
       return;
     }
-    final added = await _store.addCustom(raw);
+    final normalized = UpdateMirror.normalizeTemplate(raw);
+    if (normalized == null) {
+      ToastUtil.error('地址格式不正确');
+      return;
+    }
+    final duplicated = _store.allMirrors.any(
+      (mirror) => !mirror.isDirect && mirror.template.trim() == normalized,
+    );
+    if (duplicated) {
+      ToastUtil.info('该加速源已存在');
+      return;
+    }
+    final added = await _store.addCustom(normalized);
     if (!mounted) return;
     if (added == null) {
-      ToastUtil.info('该加速源已存在');
+      ToastUtil.error('保存失败，请稍后重试');
       return;
     }
     _addController.clear();
