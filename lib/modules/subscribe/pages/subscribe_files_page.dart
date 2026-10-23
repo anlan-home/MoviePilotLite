@@ -1,3 +1,4 @@
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,9 +7,21 @@ import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_sty
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_files_controller.dart';
 import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_files_models.dart';
 import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_models.dart';
+import 'package:moviepilot_mobile/utils/image_cache_manager.dart';
+import 'package:moviepilot_mobile/utils/image_request_headers.dart';
 import 'package:moviepilot_mobile/utils/image_util.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
 import 'package:moviepilot_mobile/widgets/cached_image.dart';
+
+/// 与服务端图片代理 URL 保持一致的缓存键，保证预热与弹层内加载命中同一条目。
+String _cachedImageKey(String url) {
+  final uri = Uri.tryParse(url);
+  if (uri == null) return url;
+  final query = uri.queryParameters;
+  final inner = query['url'] ?? query['imgurl'];
+  return inner != null && inner.isNotEmpty ? inner : url;
+}
+
 
 Future<void> showSubscribeFilesSheet(
   BuildContext context,
@@ -24,9 +37,18 @@ Future<void> showSubscribeFilesSheet(
       ? item.backdrop
       : item.poster;
   if (backdrop != null && backdrop.trim().isNotEmpty && context.mounted) {
+    final url = ImageUtil.convertCacheImageUrl(backdrop.trim());
+    // 服务端图片代理要求资源令牌 Cookie，裸 NetworkImage 带不了请求头，
+    // 预热必然 401；预热失败静默交给弹层内的 CachedImage 正常加载。
     precacheImage(
-      NetworkImage(ImageUtil.convertCacheImageUrl(backdrop.trim())),
+      CachedNetworkImageProvider(
+        url,
+        cacheKey: _cachedImageKey(url),
+        headers: buildImageRequestHeaders(url),
+        cacheManager: AppImageCacheManager.instance,
+      ),
       context,
+      onError: (_, __) {},
     );
   }
   try {
