@@ -22,9 +22,9 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Scaffold(
       appBar: AppBar(title: const Text('应用设置'), centerTitle: false),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
         children: [
-          _buildAppInfoCard(context),
+          _buildAppHeaderCard(context),
           _buildAppearanceSection(context),
           _buildSearchAndDownloadSection(context),
           _buildBrowserSection(context),
@@ -38,13 +38,12 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Section(
       margin: const EdgeInsets.only(bottom: 20),
       padding: EdgeInsets.zero,
-      header: const SectionHeader(title: '外观与首页', subtitle: '主题、背景、布局'),
+      header: const SectionHeader(title: '外观与首页'),
       separatorBuilder: _buildDivider,
       children: [
         _buildNavigationTile(
           context,
           title: '主题风格',
-          subtitle: '主题模式与主色设置',
           icon: Icons.palette_outlined,
           iconColor: CupertinoColors.activeBlue,
           onTap: () => Get.toNamed('/settings/app/theme-mode'),
@@ -52,7 +51,6 @@ class AppSettingPage extends GetView<AppSettingController> {
         _buildNavigationTile(
           context,
           title: '背景图片',
-          subtitle: '自定义应用背景与视觉氛围',
           icon: Icons.photo_outlined,
           iconColor: CupertinoColors.systemPurple,
           onTap: () => Get.toNamed('/settings/app/background-image'),
@@ -60,7 +58,6 @@ class AppSettingPage extends GetView<AppSettingController> {
         _buildNavigationTile(
           context,
           title: '首页布局',
-          subtitle: '编辑 Dashboard 的模块展示方式',
           icon: Icons.dashboard_customize_outlined,
           iconColor: CupertinoColors.systemTeal,
           onTap: () => _showEditDashboardModal(context),
@@ -73,14 +70,13 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Section(
       margin: const EdgeInsets.only(bottom: 20),
       padding: EdgeInsets.zero,
-      header: const SectionHeader(title: '搜索与下载', subtitle: '入口、状态、直连'),
+      header: const SectionHeader(title: '搜索与下载'),
       separatorBuilder: _buildDivider,
       children: [
         Obx(
           () => _buildSwitchTile(
             context,
             title: '搜索按钮',
-            subtitle: '控制首页是否展示快捷搜索入口',
             icon: Icons.search,
             iconColor: CupertinoColors.activeBlue,
             value: controller.showSearchButton.value,
@@ -91,7 +87,6 @@ class AppSettingPage extends GetView<AppSettingController> {
           () => _buildSwitchTile(
             context,
             title: '搜索页入库状态',
-            subtitle: '在搜索结果中显示媒体库收录状态',
             icon: Icons.video_library_outlined,
             iconColor: CupertinoColors.systemGreen,
             value: controller.enableFetchMediaserverLibraryStatus.value,
@@ -102,7 +97,6 @@ class AppSettingPage extends GetView<AppSettingController> {
           () => _buildSwitchTile(
             context,
             title: '下载器直连下载',
-            subtitle: '下载前先保存本地种子文件并跳转直连下载页',
             icon: Icons.bolt_outlined,
             iconColor: CupertinoColors.systemOrange,
             value: controller.enableSpecialDownload.value,
@@ -123,7 +117,6 @@ class AppSettingPage extends GetView<AppSettingController> {
           () => _buildSwitchTile(
             context,
             title: '下载器管理',
-            subtitle: '由 App 直接连接下载器，不经过 MoviePilot 服务器',
             icon: Icons.download_outlined,
             iconColor: CupertinoColors.systemIndigo,
             value: controller.enableDownloaderManager.value,
@@ -148,14 +141,13 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Section(
       margin: const EdgeInsets.only(bottom: 20),
       padding: EdgeInsets.zero,
-      header: const SectionHeader(title: '浏览与实验', subtitle: '兼容性与访问方式'),
+      header: const SectionHeader(title: '浏览'),
       separatorBuilder: _buildDivider,
       children: [
         Obx(
           () => _buildSwitchTile(
             context,
             title: '使用外部浏览器',
-            subtitle: '部分站点场景下可获得更好的兼容性',
             icon: Icons.public,
             iconColor: CupertinoColors.systemPink,
             value: controller.useExternalBrowser.value,
@@ -170,14 +162,13 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Section(
       margin: EdgeInsets.zero,
       padding: EdgeInsets.zero,
-      header: const SectionHeader(title: '关于应用', subtitle: '版本、日志、仓库'),
+      header: const SectionHeader(title: '关于'),
       separatorBuilder: _buildDivider,
       children: [
         Obx(
           () => _buildNavigationTile(
             context,
             title: '版本更新',
-            subtitle: '检查更新与查看更新内容',
             icon: Icons.system_update_alt_rounded,
             iconColor: CupertinoColors.systemBlue,
             additionalInfo: controller.updateStatusText,
@@ -188,7 +179,6 @@ class AppSettingPage extends GetView<AppSettingController> {
           () => _buildNavigationTile(
             context,
             title: '更新下载线路',
-            subtitle: '选择或自定义 GitHub 加速源，无需联网即可配置',
             icon: Icons.speed_rounded,
             iconColor: CupertinoColors.systemGreen,
             additionalInfo: controller.updateMirrorLabel,
@@ -201,7 +191,6 @@ class AppSettingPage extends GetView<AppSettingController> {
         _buildNavigationTile(
           context,
           title: '更新日志',
-          subtitle: '查看版本演进与功能更新记录',
           icon: Icons.history,
           iconColor: CupertinoColors.systemOrange,
           onTap: () => Get.toNamed('/settings/app/changelog'),
@@ -209,7 +198,6 @@ class AppSettingPage extends GetView<AppSettingController> {
         _buildNavigationTile(
           context,
           title: '开源仓库',
-          subtitle: '前往 GitHub 查看项目与发布信息',
           icon: Icons.open_in_new_rounded,
           iconColor: CupertinoColors.systemGrey,
           onTap: () => WebUtil.open(url: _repoUrl, internal: false),
@@ -218,7 +206,8 @@ class AppSettingPage extends GetView<AppSettingController> {
     );
   }
 
-  Widget _buildAppInfoCard(BuildContext context) {
+  /// 顶部应用信息：品牌、当前版本与仓库入口，单行呈现。
+  Widget _buildAppHeaderCard(BuildContext context) {
     final theme = Theme.of(context);
     final primary = theme.colorScheme.primary;
     final onSurface = theme.colorScheme.onSurface;
@@ -226,173 +215,76 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Obx(
       () => Container(
         margin: const EdgeInsets.only(bottom: 20),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         decoration: BoxDecoration(
           color: theme.cardColor,
-          borderRadius: BorderRadius.circular(20),
+          borderRadius: BorderRadius.circular(18),
           border: Border.all(color: theme.dividerColor.withValues(alpha: 0.22)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.04),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
         ),
-        child: Padding(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: primary.withValues(alpha: 0.10),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Assets.logo.svg(
+                colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: primary.withValues(alpha: 0.10),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Assets.logo.svg(
-                      colorFilter: ColorFilter.mode(primary, BlendMode.srcIn),
+                  Text(
+                    'MoviePilot',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: 14),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'MoviePilot',
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          '移动端设置与体验偏好',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: onSurface.withValues(alpha: 0.62),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  CupertinoButton(
-                    minimumSize: Size.zero,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    color: primary.withValues(alpha: 0.10),
-                    borderRadius: BorderRadius.circular(999),
-                    onPressed: () =>
-                        WebUtil.open(url: _repoUrl, internal: false),
+                  const SizedBox(height: 2),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => controller.handleVersionTap(context),
                     child: Text(
-                      'GitHub',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: primary,
+                      controller.version.value,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: onSurface.withValues(alpha: 0.55),
                       ),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 18),
-              Container(
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: primary.withValues(alpha: 0.045),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: _buildInfoColumn(
-                        context,
-                        label: '当前版本',
-                        value: controller.updateStatusText,
-                        onTap: () => controller.handleVersionTap(context),
-                      ),
-                    ),
-                    Container(
-                      width: 1,
-                      height: 30,
-                      margin: const EdgeInsets.symmetric(horizontal: 14),
-                      color: theme.dividerColor.withValues(alpha: 0.28),
-                    ),
-                    Expanded(
-                      child: _buildInfoColumn(
-                        context,
-                        label: '项目属性',
-                        value: '开源移动客户端',
-                      ),
-                    ),
-                  ],
+            ),
+            CupertinoButton(
+              minimumSize: Size.zero,
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+              color: primary.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(999),
+              onPressed: () => WebUtil.open(url: _repoUrl, internal: false),
+              child: Text(
+                'GitHub',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: primary,
                 ),
               ),
-
-              const SizedBox(height: 14),
-              Text(
-                'Copyright © 2026 Altman. All rights reserved.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontSize: 12,
-                  color: onSurface.withValues(alpha: 0.48),
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
-    );
-  }
-
-  Widget _buildInfoColumn(
-    BuildContext context, {
-    required String label,
-    required String value,
-    VoidCallback? onTap,
-  }) {
-    final theme = Theme.of(context);
-    final content = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: theme.textTheme.bodySmall?.copyWith(
-            fontSize: 12,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.50),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.86),
-          ),
-        ),
-      ],
-    );
-    if (onTap == null) return content;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: content,
     );
   }
 
   Widget _buildNavigationTile(
     BuildContext context, {
     required String title,
-    String? subtitle,
     required IconData icon,
     required Color iconColor,
     VoidCallback? onTap,
@@ -401,7 +293,6 @@ class AppSettingPage extends GetView<AppSettingController> {
     return _buildSettingTile(
       context,
       title: title,
-      subtitle: subtitle,
       icon: icon,
       iconColor: iconColor,
       additionalInfo: additionalInfo,
@@ -413,7 +304,6 @@ class AppSettingPage extends GetView<AppSettingController> {
   Widget _buildSwitchTile(
     BuildContext context, {
     required String title,
-    String? subtitle,
     required IconData icon,
     required Color iconColor,
     required bool value,
@@ -422,7 +312,6 @@ class AppSettingPage extends GetView<AppSettingController> {
     return _buildSettingTile(
       context,
       title: title,
-      subtitle: subtitle,
       icon: icon,
       iconColor: iconColor,
       onTap: () => onChanged(!value),
@@ -437,7 +326,6 @@ class AppSettingPage extends GetView<AppSettingController> {
   Widget _buildSettingTile(
     BuildContext context, {
     required String title,
-    String? subtitle,
     required IconData icon,
     required Color iconColor,
     Widget? trailing,
@@ -451,32 +339,21 @@ class AppSettingPage extends GetView<AppSettingController> {
       padding: const EdgeInsetsDirectional.only(
         start: 14,
         end: 12,
-        top: 8,
-        bottom: 8,
+        top: 4,
+        bottom: 4,
       ),
       leading: _buildLeadingIcon(context, icon: icon, color: iconColor),
       title: Text(
         title,
         style: theme.textTheme.bodyLarge?.copyWith(
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
           color: colorScheme.onSurface,
         ),
       ),
-      subtitle: subtitle != null
-          ? Text(
-              subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-                height: 1.25,
-              ),
-            )
-          : null,
       additionalInfo: additionalInfo != null
           ? Text(
               additionalInfo,
-              style: theme.textTheme.labelLarge?.copyWith(
+              style: theme.textTheme.bodySmall?.copyWith(
                 color: colorScheme.onSurfaceVariant,
               ),
             )
@@ -492,14 +369,14 @@ class AppSettingPage extends GetView<AppSettingController> {
     required Color color,
   }) {
     return Container(
-      width: 30,
-      height: 30,
+      width: 28,
+      height: 28,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(7),
       ),
-      child: Icon(icon, size: 17, color: color),
+      child: Icon(icon, size: 16, color: color),
     );
   }
 
@@ -507,7 +384,7 @@ class AppSettingPage extends GetView<AppSettingController> {
     return Divider(
       height: 0.1,
       color: Theme.of(context).dividerColor,
-      indent: 58,
+      indent: 54,
       endIndent: 16,
     );
   }
