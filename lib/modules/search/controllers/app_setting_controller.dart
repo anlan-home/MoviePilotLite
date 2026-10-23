@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/search/models/app_update_info.dart';
+import 'package:moviepilot_mobile/modules/search/pages/update_mirror_sheet.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_installer.dart';
 import 'package:moviepilot_mobile/modules/search/services/app_update_service.dart';
+import 'package:moviepilot_mobile/modules/search/services/update_mirror_store.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/models/app_icon_option.dart';
 import 'package:moviepilot_mobile/utils/open_url.dart';
@@ -34,6 +36,7 @@ class AppSettingController extends GetxController {
   final downloadedApkPath = RxnString();
   CancelToken? _downloadCancelToken;
   late final AppUpdateService _updateService;
+  late final UpdateMirrorStore _mirrorStore;
 
   // 背景图设置
   final backgroundImageEnabled = false.obs;
@@ -69,6 +72,9 @@ class AppSettingController extends GetxController {
     _updateService = Get.isRegistered<AppUpdateService>()
         ? Get.find<AppUpdateService>()
         : Get.put(AppUpdateService(), permanent: true);
+    _mirrorStore = Get.isRegistered<UpdateMirrorStore>()
+        ? Get.find<UpdateMirrorStore>()
+        : Get.put(UpdateMirrorStore(), permanent: true);
 
     // 监听变化
     ever(
@@ -211,6 +217,8 @@ class AppSettingController extends GetxController {
     return version.value;
   }
 
+  String get updateMirrorLabel => _mirrorStore.selectedMirror.label;
+
   Future<void> handleVersionTap(BuildContext context) async {
     if (!Platform.isAndroid && !Platform.isIOS) {
       ToastUtil.info('当前平台暂不支持检查更新');
@@ -259,10 +267,7 @@ class AppSettingController extends GetxController {
     }
   }
 
-  Future<void> downloadLatestApk(
-    AppUpdateInfo info, {
-    bool useProxy = false,
-  }) async {
+  Future<void> downloadLatestApk(AppUpdateInfo info) async {
     if (isDownloadingUpdate.value) {
       _showDownloadProgressSheet();
       return;
@@ -272,6 +277,8 @@ class AppSettingController extends GetxController {
       return;
     }
 
+    await _mirrorStore.ensureLoaded();
+    final mirror = _mirrorStore.selectedMirror;
     isDownloadingUpdate.value = true;
     downloadProgress.value = 0;
     downloadedApkPath.value = null;
@@ -280,7 +287,7 @@ class AppSettingController extends GetxController {
     try {
       final path = await _updateService.downloadApk(
         info,
-        useProxy: useProxy,
+        mirror: mirror,
         cancelToken: _downloadCancelToken,
         onProgress: (received, total) {
           if (total > 0) {
@@ -496,20 +503,35 @@ class AppSettingController extends GetxController {
                   if (canDownloadApk && info.hasApk)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                      child: CupertinoButton(
-                        padding: const EdgeInsets.symmetric(vertical: 11),
-                        color: colorScheme.primaryContainer,
-                        onPressed: () {
-                          Get.back();
-                          downloadLatestApk(info, useProxy: true);
-                        },
-                        child: Text(
-                          '加速下载（ghproxy.net）',
-                          style: TextStyle(
-                            color: colorScheme.onPrimaryContainer,
+                      child: Obx(() {
+                        final mirror = _mirrorStore.selectedMirror;
+                        return CupertinoButton(
+                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          color: colorScheme.primaryContainer,
+                          onPressed: () => _showMirrorPicker(context),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.speed_rounded,
+                                size: 18,
+                                color: colorScheme.onPrimaryContainer,
+                              ),
+                              const SizedBox(width: 6),
+                              Flexible(
+                                child: Text(
+                                  '下载线路：${mirror.label}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    color: colorScheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
+                        );
+                      }),
                     ),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
@@ -605,6 +627,10 @@ class AppSettingController extends GetxController {
         ],
       ),
     );
+  }
+
+  Future<void> _showMirrorPicker(BuildContext context) async {
+    await showUpdateMirrorSheet(context);
   }
 
   void _showInstallDialog(AppUpdateInfo info) {
