@@ -458,19 +458,48 @@ class MultifunctionController extends GetxController {
     }
   }
 
-  /// 服务端订阅记录可能未回填封面（v3 音乐订阅必然为空）。
+  /// 订阅记录可展示的图片：海报缺失时退到背景图，二者都没有才算缺图。
+  String _subscribeCoverOf(Map<String, dynamic> item) {
+    final poster = (item['poster']?.toString() ?? '').trim();
+    if (poster.isNotEmpty) return poster;
+    return (item['backdrop']?.toString() ?? '').trim();
+  }
+
+  /// 订阅类型到「更多」页分类卡的归属；无法识别的类型沿用剧集分类。
+  String _subscribeRouteForType(String type) {
+    final normalized = type.trim().toLowerCase();
+    if (normalized.contains('movie') || normalized.contains('电影')) {
+      return '/subscribe-movie';
+    }
+    if (normalized.contains('音乐') || normalized.contains('music')) {
+      return '/subscribe-music';
+    }
+    return '/subscribe-tv';
+  }
+
+  /// 服务端订阅记录可能未回填封面（v3 音乐订阅常见为空）。
   /// 按名称走媒体搜索为缺失封面的条目补图，补齐后重建订阅区数据。
   Future<void> _resolveMissingPosters(
     List<Map<String, dynamic>> subscribes,
   ) async {
     if (isCalendarMockEnabled) return;
-    final missing = subscribes
-        .where((item) => (item['poster']?.toString() ?? '').trim().isEmpty)
-        .where((item) => (item['name']?.toString() ?? '').trim().isNotEmpty)
-        .take(6)
-        .toList();
+    // 每个分类各保留 3 个补齐名额。整体 take 会被某一类订阅占满，
+    // 使另一类永远补不到封面、只能显示占位图。
+    const perRouteLimit = 3;
+    final missingByRoute = <String, List<Map<String, dynamic>>>{};
+    for (final item in subscribes) {
+      if (_subscribeCoverOf(item).isNotEmpty) continue;
+      if ((item['name']?.toString() ?? '').trim().isEmpty) continue;
+      final route = _subscribeRouteForType(item['type']?.toString() ?? '');
+      final bucket = missingByRoute.putIfAbsent(
+        route,
+        () => <Map<String, dynamic>>[],
+      );
+      if (bucket.length < perRouteLimit) bucket.add(item);
+    }
+    final missing = missingByRoute.values.expand((bucket) => bucket).toList();
     _log.debug(
-      '[封面补齐] 总订阅 ${subscribes.length} 条，缺封面 ${missing.length} 条：'
+      '[封面补齐] 总订阅 ${subscribes.length} 条，缺封面候选 ${missing.length} 条：'
       '${missing.map((e) => '${e['name']}(${e['type']})').join('、')}',
     );
     if (missing.isEmpty) return;
@@ -482,8 +511,10 @@ class MultifunctionController extends GetxController {
     var changed = false;
     for (final item in missing) {
       final name = item['name'].toString().trim();
-      final type = (item['type']?.toString() ?? '').trim().toLowerCase();
-      final isMusic = type.contains('音乐') || type.contains('music');
+      final type = item['type']?.toString() ?? '';
+      final route = _subscribeRouteForType(type);
+      final isMusic = route == '/subscribe-music';
+      final musicType = (item['music_type']?.toString() ?? '').trim();
       try {
         _log.debug('[封面补齐] 搜索 "$name" type=${isMusic ? 'music' : 'media'}');
         final response = await _apiClient.get<dynamic>(
@@ -492,7 +523,9 @@ class MultifunctionController extends GetxController {
           queryParameters: {
             'title': name,
             'type': isMusic ? 'music' : 'media',
-            'count': 1,
+            // 多取几个候选：首个结果未必带封面，也未必是同一类媒体。
+            'count': isMusic ? 6 : 4,
+            if (isMusic && musicType.isNotEmpty) 'music_type': musicType,
           },
         );
         final status = response.statusCode ?? 0;
@@ -510,20 +543,12 @@ class MultifunctionController extends GetxController {
           _log.debug('[封面补齐] "$name" 无搜索结果');
           continue;
         }
-        final first = list.first;
-        if (first is! Map) {
-          _log.warning('[封面补齐] "$name" 结果格式异常: ${first.runtimeType}');
-          continue;
-        }
-        final cover =
-            (first['poster'] ??
-                    first['poster_path'] ??
-                    first['cover_url'] ??
-                    '')
-                .toString()
-                .trim();
+        final cover = _pickSearchCover(list, route: route, name: name);
         if (cover.isEmpty) {
-          _log.debug('[封面补齐] "$name" 命中但无封面字段，可用键: ${first.keys.toList()}');
+          _log.debug(
+            '[封面补齐] "$name" 命中 ${list.length} 条但均无封面字段，'
+            '可用键: ${list.first is Map ? (list.first as Map).keys.toList() : list.first.runtimeType}',
+          );
           continue;
         }
         item['poster'] = cover;
@@ -540,6 +565,46 @@ class MultifunctionController extends GetxController {
     if (changed) {
       _buildSubscribeInfo(subscribes);
     }
+  }
+
+  /// 从搜索结果中挑封面：优先同名且同分类，其次同分类，最后退到任意带封面的结果。
+  String _pickSearchCover(
+    List<dynamic> results, {
+    required String route,
+    required String name,
+  }) {
+    final normalizedName = name.trim().toLowerCase();
+    String? routeCover;
+    String? anyCover;
+    for (final result in results) {
+      if (result is! Map) continue;
+      final cover = _coverFieldOf(result);
+      if (cover.isEmpty) continue;
+      anyCover ??= cover;
+      final resultRoute = _subscribeRouteForType(
+        (result['type'] ?? result['media_type'] ?? '').toString(),
+      );
+      if (resultRoute != route) continue;
+      routeCover ??= cover;
+      final title =
+          (result['title'] ?? result['name'] ?? '').toString().trim().toLowerCase();
+      if (title.isNotEmpty && title == normalizedName) return cover;
+    }
+    return routeCover ?? anyCover ?? '';
+  }
+
+  /// 不同搜索分支的封面字段名不一致：影视用 poster/poster_path，音乐用 cover_url。
+  String _coverFieldOf(Map result) {
+    for (final key in const [
+      'poster',
+      'poster_path',
+      'cover_url',
+      'backdrop_path',
+    ]) {
+      final value = (result[key]?.toString() ?? '').trim();
+      if (value.isNotEmpty) return value;
+    }
+    return '';
   }
 
   /// 仅刷新下载管理区数据，供定时器轮询使用。
@@ -651,34 +716,42 @@ class MultifunctionController extends GetxController {
     var tvCount = 0;
     var musicCount = 0;
     final posters = <String>[];
-    final posterItems = <SubscribePosterItem>[];
+    // 每个分类最多留 3 张（背景 + 2 张扇形叠放）。之前对全部海报统一
+    // take(8)，列表靠前的电影订阅会把剧集、音乐的名额挤光，导致分类卡
+    // 只能显示占位图。
+    const perRoutePosterLimit = 3;
+    final posterItemsByRoute = <String, List<SubscribePosterItem>>{};
     for (final item in subscribes) {
       final type = (item['type']?.toString() ?? '').trim().toLowerCase();
-      String route = '/subscribe-tv';
-      if (type.contains('movie') || type.contains('电影')) {
+      final route = _subscribeRouteForType(type);
+      if (route == '/subscribe-movie') {
         movieCount++;
-        route = '/subscribe-movie';
+      } else if (route == '/subscribe-music') {
+        musicCount++;
       } else if (type.contains('tv') ||
           type.contains('电视剧') ||
           type.contains('剧集')) {
         tvCount++;
-        route = '/subscribe-tv';
-      } else if (type.contains('音乐') || type.contains('music')) {
-        musicCount++;
-        route = '/subscribe-music';
       }
-      final poster = (item['poster']?.toString() ?? '').trim();
-      if (poster.isNotEmpty) {
-        posters.add(poster);
-        posterItems.add(SubscribePosterItem(poster: poster, route: route));
-      }
+      final cover = _subscribeCoverOf(item);
+      if (cover.isEmpty) continue;
+      posters.add(cover);
+      final bucket = posterItemsByRoute.putIfAbsent(
+        route,
+        () => <SubscribePosterItem>[],
+      );
+      if (bucket.length >= perRoutePosterLimit) continue;
+      bucket.add(SubscribePosterItem(poster: cover, route: route));
     }
+    final posterItems = posterItemsByRoute.values
+        .expand((bucket) => bucket)
+        .toList();
     subscribeInfo.value = SubscribeDashboardInfo(
       movieCount: movieCount,
       tvCount: tvCount,
       musicCount: musicCount,
       posters: posters.take(5).toList(),
-      posterItems: posterItems.take(8).toList(),
+      posterItems: posterItems,
     );
     _log.debug(
       '[订阅区] 电影 $movieCount / 剧集 $tvCount / 音乐 $musicCount，'

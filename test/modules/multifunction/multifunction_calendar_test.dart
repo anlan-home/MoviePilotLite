@@ -17,6 +17,7 @@ class _FakeApiClient extends GetxService implements ApiClient {
   final failures = <String>{};
   final paths = <String>[];
   final queries = <String, Map<String, dynamic>?>{};
+  final queryLog = <Map<String, dynamic>?>[];
   final tokens = <String, String?>{};
 
   @override
@@ -38,6 +39,7 @@ class _FakeApiClient extends GetxService implements ApiClient {
   }) async {
     paths.add(path);
     queries[path] = queryParameters;
+    queryLog.add(queryParameters);
     tokens[path] = token;
     if (failures.contains(path)) {
       throw DioException(
@@ -400,4 +402,106 @@ void main() {
       expect(api.paths, isEmpty);
     },
   );
+
+  test(
+    'keeps per-category subscribe posters instead of truncating globally',
+    () async {
+      api.subscribes = [
+        for (var i = 1; i <= 10; i++) _subscription(i, type: '电影'),
+        _subscription(11, type: '电视剧'),
+        _subscription(12, type: '音乐'),
+      ];
+
+      await controller.refreshSubscribeSection();
+
+      final items = controller.subscribeInfo.value.posterItems;
+      expect(items.where((e) => e.route == '/subscribe-movie'), hasLength(3));
+      expect(items.where((e) => e.route == '/subscribe-tv'), hasLength(1));
+      expect(items.where((e) => e.route == '/subscribe-music'), hasLength(1));
+    },
+  );
+
+  test(
+    'falls back to backdrop when the subscription poster is empty',
+    () async {
+      api.subscribes = [
+        {
+          ..._subscription(1),
+          'poster': '',
+          'backdrop': 'https://image.test/1-backdrop.jpg',
+        },
+      ];
+
+      await controller.refreshSubscribeSection();
+
+      final item = controller.subscribeInfo.value.posterItems.single;
+      expect(item.poster, 'https://image.test/1-backdrop.jpg');
+      expect(
+        api.paths.where((path) => path == '/api/v1/media/search'),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'backfills missing covers for every subscribe category',
+    () async {
+      api.subscribes = [
+        for (var i = 1; i <= 10; i++)
+          {..._subscription(i, type: '音乐'), 'poster': ''},
+        {..._subscription(11, type: '电视剧'), 'poster': ''},
+      ];
+      api.payloads['/api/v1/media/search'] = [
+        {
+          'type': '音乐',
+          'title': '另一个专辑',
+          'cover_url': 'https://cover.test/music.jpg',
+        },
+        {
+          'type': '电视剧',
+          'title': '另一个剧集',
+          'poster': 'https://cover.test/tv.jpg',
+        },
+      ];
+
+      await controller.refreshSubscribeSection();
+      await _waitFor(
+        () =>
+            controller.subscribeInfo.value.posterItems.any(
+              (e) => e.route == '/subscribe-music',
+            ) &&
+            controller.subscribeInfo.value.posterItems.any(
+              (e) => e.route == '/subscribe-tv',
+            ),
+        reason: '分类封面补齐未完成',
+      );
+
+      final items = controller.subscribeInfo.value.posterItems;
+      final music = items.where((e) => e.route == '/subscribe-music').toList();
+      final tv = items.where((e) => e.route == '/subscribe-tv').toList();
+      // 每个分类各自最多补 3 条：音乐不会把剧集的补齐名额占光。
+      expect(music, hasLength(3));
+      expect(
+        music.every((e) => e.poster == 'https://cover.test/music.jpg'),
+        isTrue,
+      );
+      expect(tv, hasLength(1));
+      expect(tv.single.poster, 'https://cover.test/tv.jpg');
+      final musicQuery = api.queryLog.firstWhere(
+        (query) => query?['type'] == 'music',
+      );
+      expect(musicQuery?['count'], 6);
+    },
+  );
+}
+
+Future<void> _waitFor(
+  bool Function() condition, {
+  String reason = 'condition not met in time',
+}) async {
+  for (var i = 0; i < 200; i++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+  fail(reason);
 }
