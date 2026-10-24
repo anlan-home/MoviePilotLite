@@ -295,16 +295,16 @@
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/yipengfei329/AetherEngine.git";
 			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 7.36.0;
+				kind = revision;
+				revision = 615e416843c50869fe26a61fc37679a29fc7f40d;
 			};
 		};
 		AA0000000000000000000009 /* XCRemoteSwiftPackageReference "FFmpegBuild" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/superuser404notfound/FFmpegBuild.git";
 			requirement = {
-				kind = upToNextMinorVersion;
-				minimumVersion = 3.7.1;
+				kind = exactVersion;
+				version = 3.6.0;
 			};
 		};
 /* End XCRemoteSwiftPackageReference section */
