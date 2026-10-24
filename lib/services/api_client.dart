@@ -9,7 +9,6 @@ import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:talker/talker.dart';
 import 'package:talker_dio_logger/talker_dio_logger.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
-import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/dio_adapter_config_stub.dart'
     if (dart.library.io) 'package:moviepilot_mobile/utils/dio_adapter_config_io.dart'
     if (dart.library.js_interop) 'package:moviepilot_mobile/utils/dio_adapter_config_web.dart';
@@ -214,26 +213,15 @@ class ApiClient extends g.GetxController {
             return;
           }
 
+          // 按**响应形状**判定信封,不再依赖全局的 v3 判定:
+          // - v3 的列表接口返回 {success, data: [...]}(v2 是裸数组),这里统一取出载荷;
+          // - Map 载荷用"合并"语义:载荷字段优先,同时把 success/message/data 回填,
+          //   因此"读载荷字段"与"读 data.value / data.xxx"两种既有习惯都能工作;
+          // - 判定与 v3 探测时机/被其它模块翻转无关,避免冷启动窗口内列表页读不到数据。
           final envelope = response.data;
           if (envelope is! Map ||
               envelope['success'] is! bool ||
               !envelope.containsKey('data')) {
-            handler.next(response);
-            return;
-          }
-
-          if (!g.Get.isRegistered<ServerApiVersionService>()) {
-            handler.next(response);
-            return;
-          }
-
-          try {
-            final isV3 = await g.Get.find<ServerApiVersionService>().isV3();
-            if (!isV3) {
-              handler.next(response);
-              return;
-            }
-          } catch (_) {
             handler.next(response);
             return;
           }

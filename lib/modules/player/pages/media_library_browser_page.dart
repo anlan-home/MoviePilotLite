@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:lanplayer_player/lanplayer_player.dart' as kit;
 
+import '../../../services/api_client.dart';
+import '../../mediaserver/models/mediaserver_model.dart';
 import '../controllers/player_launch_controller.dart';
 
 /// 媒体库浏览宿主页:管理员凭据直连媒体服务器,内嵌 lanplayer 浏览界面。
@@ -22,6 +24,9 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
   String? _libraryId;
   String? _libraryName;
 
+  /// 库所属媒体服务器名(v3 常配多台,点哪台的库就打开哪台)
+  String? _serverName;
+
   @override
   void initState() {
     super.initState();
@@ -29,6 +34,7 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
     if (args is Map) {
       _libraryId = args['libraryId']?.toString();
       _libraryName = args['libraryName']?.toString();
+      _serverName = args['serverName']?.toString();
     }
     _prepare();
   }
@@ -52,12 +58,11 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
         });
         return;
       }
-      final kitServer =
-          await launch.toKitServer(servers.first, isDefault: true);
+      final kitServer = await _pickReachableServer(servers);
       if (kitServer == null) {
         setState(() {
           _loading = false;
-          _error = '媒体服务器配置缺少地址';
+          _error = '媒体服务器不可达\n请检查服务端「媒体服务器」配置,下线的那台建议先停用';
         });
         return;
       }
@@ -74,10 +79,53 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
     }
   }
 
+  /// 挑一台**确实在线**的媒体服务器。
+  ///
+  /// 背景(2026-10-10 v3 实测):v3 常同时配多台媒体服务器(如 jellyfin + emby),
+  /// 其中一台下线时 MP 的代理接口会对它返回 502;而这里原先固定用第一台,
+  /// 结果「点击媒体库」直接加载失败。现在:**库所属服务器优先**(路由里的
+  /// serverName,其次按库名匹配),其余按启用顺序;先用 MP 的库列表接口探测
+  /// (2xx 视为在线),再构造 kit 服务器 —— 点哪台的库就打开哪台。
+  Future<kit.MediaServer?> _pickReachableServer(
+    List<MediaServer> servers,
+  ) async {
+    final launch = PlayerLaunchController.to;
+    final ordered = <MediaServer>[...servers];
+    final wantServer = _serverName;
+    final name = wantServer != null && wantServer.isNotEmpty
+        ? wantServer
+        : _libraryName;
+    if (name != null && name.isNotEmpty) {
+      final index = ordered.indexWhere((s) => s.name == name);
+      if (index > 0) {
+        ordered.insert(0, ordered.removeAt(index));
+      }
+    }
+    final api = Get.find<ApiClient>();
+    for (final server in ordered) {
+      try {
+        final probe = await api.get<dynamic>(
+          '/api/v1/mediaserver/library?server=${server.name}',
+        );
+        if ((probe.statusCode ?? 0) != 200) continue;
+      } catch (_) {
+        continue;
+      }
+      final kitServer = await launch.toKitServer(server, isDefault: true);
+      if (kitServer != null) return kitServer;
+    }
+    return null;
+  }
+
   /// kit 浏览网格点条目:有 TMDB 身份时打开 MP 媒体详情页(观感与 MP 一致),
   /// 同时携带媒体服务器条目上下文,详情页播放区可直连起播;返回 false 交给
   /// kit 默认详情页(无 TMDB 映射的条目)。
   bool _openItemDetail(kit.MediaItem item) {
+    // 合集(BoxSet)交给播放器自己的合集详情页:它会列出合集内的影视。
+    // 合集携带的是"合集级 TMDB 标识",拿它去查 MP 媒体详情会返回不完整数据
+    // (2026-10-10 v3 真机实测:合集点进去显示「请求错误 · 媒体信息不完整」,
+    //  而且会渲染出一个点了必然失败的播放入口)。
+    if (item.isBoxSet) return false;
     final tmdbId = item.tmdbId;
     if (tmdbId == null || tmdbId <= 0) return false;
     final pathKey = 'tmdb:$tmdbId';
