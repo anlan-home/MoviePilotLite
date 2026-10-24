@@ -10,7 +10,6 @@
 		AA0000000000000000000001 /* AetherPlayerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* AetherPlayerPlugin.swift */; };
 		AA0000000000000000000003 /* AetherEngine in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000005 /* AetherEngine */; };
 		AA0000000000000000000006 /* AetherFFmpegBuild in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000008 /* AetherFFmpegBuild */; };
-		AA0000000000000000000007 /* AetherFFmpegBuild in Embed Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000008 /* AetherFFmpegBuild */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		2F6B8F7A3D00400100A10001 /* MoviePilotWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6B8F7A3D00400100B10001 /* MoviePilotWidgetsBundle.swift */; };
 		2F6B8F7A3D00400100A10002 /* SubscribeCalendarWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6B8F7A3D00400100B10002 /* SubscribeCalendarWidget.swift */; };
@@ -55,7 +54,6 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
-				AA0000000000000000000007 /* AetherFFmpegBuild in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
