@@ -2540,9 +2540,45 @@ class FnOSService extends EmbyService {
     }
     final list = _extractList(res);
     final items = _fnosParseItems(list);
+    // 多季剧集：飞牛的集挂在「季」下面，直接拿剧集 guid 查 episode/list 往往
+    // 返回空（季 guid 才稳定可用）。这里兜底逐季拉取并合并，让 MP 详情页的
+    // 选季/选集能拿到全部集（真机：黑镜这类多季剧集选集为空）。
+    if (items.isEmpty && seasonId == null && !_expandingSeasons) {
+      await _expandAllSeasons(seriesId, items);
+    }
     _sortEpisodes(items);
     if (items.isNotEmpty) _episodesCache[targetGuid] = _CachedEpisodes(items);
     return items;
+  }
+
+  /// 逐季展开剧集（见 getEpisodes 的兜底说明）。用重入标记避免
+  /// getSeasons 的「季当容器」兜底再次回到 getEpisodes 造成递归。
+  bool _expandingSeasons = false;
+
+  Future<void> _expandAllSeasons(String seriesId, List<MediaItem> out) async {
+    _expandingSeasons = true;
+    try {
+      final seasons = await getSeasons(seriesId);
+      for (final season in seasons) {
+        final eps = await getEpisodes(seriesId, seasonId: season.id);
+        for (final ep in eps) {
+          final sn = ep.seasonNumber;
+          final needsSeason = sn == null || sn == 0;
+          final fixed = needsSeason && season.seasonNumber != null
+              ? ep.copyWith(seasonNumber: season.seasonNumber)
+              : ep;
+          out.add(fixed.seriesId == null
+              ? fixed.copyWith(seriesId: seriesId)
+              : fixed);
+        }
+      }
+      AppLog.i('FnOS', 'getEpisodes($seriesId) 直接查询为空,已逐季展开:'
+          '${seasons.length} 季 / ${out.length} 集');
+    } catch (e) {
+      AppLog.w('FnOS', 'getEpisodes 逐季展开失败: $e');
+    } finally {
+      _expandingSeasons = false;
+    }
   }
 
   @override
