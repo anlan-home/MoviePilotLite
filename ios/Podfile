@@ -1,4 +1,4 @@
-platform :ios, '15.0'
+platform :ios, '18.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -42,8 +42,8 @@ post_install do |installer|
     # 等)仍声明 9.0,统一抬升到与 Podfile platform 一致。
     target.build_configurations.each do |config|
       current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'].to_f
-      if current > 0 && current < 15.0
-        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+      if current > 0 && current < 18.0
+        config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '18.0'
       end
     end
   end

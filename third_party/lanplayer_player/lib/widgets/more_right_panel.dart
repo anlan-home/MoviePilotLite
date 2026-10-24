@@ -113,7 +113,9 @@ class MoreRightPanel extends StatelessWidget {
   final String engineLabel; // 内核当前值（Exo / MPV / 自动）
   final bool externalSubtitleLoaded; // 外挂字幕是否已加载
   final VoidCallback onQuality;
-  final VoidCallback onEngine;
+
+  /// 内核切换入口；iOS 只有 Aether 一条内核，传 null 时隐藏该格。
+  final VoidCallback? onEngine;
   final VoidCallback onStyle;
   final VoidCallback onExternalSubtitle;
   final VoidCallback onOnlineSearch;
@@ -126,7 +128,7 @@ class MoreRightPanel extends StatelessWidget {
     required this.engineLabel,
     required this.externalSubtitleLoaded,
     required this.onQuality,
-    required this.onEngine,
+    this.onEngine,
     required this.onStyle,
     required this.onExternalSubtitle,
     required this.onOnlineSearch,
@@ -155,13 +157,14 @@ class MoreRightPanel extends StatelessWidget {
               badge: qualityLabel,
               onTap: onQuality,
             ),
-            _MoreTile(
-              icon: Icons.movie_filter_rounded,
-              label: '切换内核',
-              badge: engineLabel,
-              badgeGray: true,
-              onTap: onEngine,
-            ),
+            if (onEngine != null)
+              _MoreTile(
+                icon: Icons.movie_filter_rounded,
+                label: '切换内核',
+                badge: engineLabel,
+                badgeGray: true,
+                onTap: onEngine!,
+              ),
             _MoreTile(
               icon: Icons.text_fields_rounded,
               label: '字幕样式',

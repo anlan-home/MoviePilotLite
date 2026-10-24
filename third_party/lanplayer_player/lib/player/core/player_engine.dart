@@ -9,7 +9,10 @@ enum PlayerEngineType {
   auto,
 
   /// 定制 libmpv 原生 Surface 直渲（弹幕卡顿根治内核，实验）
-  nativeSurface;
+  nativeSurface,
+
+  /// iOS 原生内核：AetherEngine（FFmpeg 拆、Apple 播，DV/PGS/ASS 由引擎负责）
+  aether;
 
   String get label {
     switch (this) {
@@ -19,6 +22,8 @@ enum PlayerEngineType {
         return '自动选择';
       case PlayerEngineType.nativeSurface:
         return 'MPV原生(Surface)';
+      case PlayerEngineType.aether:
+        return 'Aether 原生';
     }
   }
 
@@ -30,6 +35,8 @@ enum PlayerEngineType {
         return '自动';
       case PlayerEngineType.nativeSurface:
         return '原生';
+      case PlayerEngineType.aether:
+        return 'Aether';
     }
   }
 }

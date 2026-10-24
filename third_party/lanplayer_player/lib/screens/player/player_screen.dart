@@ -880,8 +880,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         // Title → 「语言 编码 #N (内封/外挂)」。mpv/Exo 伪造的「音轨 N」从此
         // 进不了 UI；引擎轨与服务端轨不再做两源合并——同一条流只有列表里的
         // 一个条目，重复与详情页不一致从架构上消失。
-        final serverSubsAll =
-            _activeMedia.subtitleTracks ?? const <Map<String, dynamic>>[];
+        // iOS 的 Aether 内核自己枚举并渲染内嵌字幕（含 PGS），服务端轨不再参与
+        // 合并/下载，避免与原生字幕叠加层重复渲染。
+        final serverSubsAll = _engineType == PlayerEngineType.aether
+            ? const <Map<String, dynamic>>[]
+            : (_activeMedia.subtitleTracks ?? const <Map<String, dynamic>>[]);
         final serverSubs = serverSubsAll.where((t) {
           // 图片字幕（PGS/DVDsub 等）无法走文本渲染管线，不提供假选项。
           // 编码名各服务端写法不一：Emby 用 PGSSUB，飞牛用 codec_name =
@@ -961,8 +964,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           return rank(a).compareTo(rank(b));
         });
         // 音轨同样服务器驱动：条目 = 服务器音频流 + nativeIndex 映射
-        final serverAudios =
-            _activeMedia.audioTracks ?? const <Map<String, dynamic>>[];
+        // iOS Aether 内核自己枚举音轨，不再与服务器轨合并。
+        final serverAudios = _engineType == PlayerEngineType.aether
+            ? const <Map<String, dynamic>>[]
+            : (_activeMedia.audioTracks ?? const <Map<String, dynamic>>[]);
         var audioLeft = List<int>.generate(audios.length, (i) => i);
         final audiosMerged = <Map<String, dynamic>>[];
         for (final s in serverAudios) {
@@ -2657,7 +2662,10 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       engineLabel: _engineType.shortLabel,
       externalSubtitleLoaded: _externalSubtitleLoaded,
       onQuality: () => setState(() => _rightPanelType = 'quality'),
-      onEngine: () => setState(() => _rightPanelType = 'engine'),
+      // iOS 只有 Aether 一条内核，隐藏切换入口
+      onEngine: Platform.isIOS
+          ? null
+          : () => setState(() => _rightPanelType = 'engine'),
       onStyle: () => setState(() => _rightPanelType = 'style'),
       onExternalSubtitle: () {
         setState(() => _rightPanelType = null);
@@ -2737,6 +2745,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _switchEngine(PlayerEngineType type) async {
     if (type == _engineType) return;
+    // iOS 只有 Aether 一条内核，不存在可切换的备选
+    if (Platform.isIOS) return;
     if (_engine == null || _cleanupDone || _isDisposed) return;
     _screenAwake.bind(null, isAudio: _isAudio);
     _stopLibass(); // libass 层绑定当前引擎,切内核必须重建(新内核是 MPV 则自带特效渲染)

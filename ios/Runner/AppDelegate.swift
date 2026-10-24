@@ -38,6 +38,10 @@ private let appWidgetLog = Logger(subsystem: "com.altman.moviepilot", category: 
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // 内嵌播放器 iOS 原生内核（AetherEngine）的平台视图
+    if let aetherRegistrar = engineBridge.pluginRegistry.registrar(forPlugin: "AetherPlayerPlugin") {
+      AetherPlayerPlugin.register(with: aetherRegistrar)
+    }
     let messenger = engineBridge.applicationRegistrar.messenger()
 
     let appIconChannel = FlutterMethodChannel(

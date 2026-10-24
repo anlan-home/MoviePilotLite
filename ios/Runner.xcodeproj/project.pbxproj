@@ -3,10 +3,14 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 56;
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA0000000000000000000001 /* AetherPlayerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* AetherPlayerPlugin.swift */; };
+		AA0000000000000000000003 /* AetherEngine in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000005 /* AetherEngine */; };
+		AA0000000000000000000006 /* AetherFFmpegBuild in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000008 /* AetherFFmpegBuild */; };
+		AA0000000000000000000007 /* AetherFFmpegBuild in Embed Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000008 /* AetherFFmpegBuild */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */ = {isa = PBXBuildFile; fileRef = 1498D2331E8E89220040F4C2 /* GeneratedPluginRegistrant.m */; };
 		2F6B8F7A3D00400100A10001 /* MoviePilotWidgetsBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6B8F7A3D00400100B10001 /* MoviePilotWidgetsBundle.swift */; };
 		2F6B8F7A3D00400100A10002 /* SubscribeCalendarWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6B8F7A3D00400100B10002 /* SubscribeCalendarWidget.swift */; };
@@ -51,6 +55,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 10;
 			files = (
+				AA0000000000000000000007 /* AetherFFmpegBuild in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -58,6 +63,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AA0000000000000000000002 /* AetherPlayerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Aether/AetherPlayerPlugin.swift; sourceTree = "<group>"; };
 		01B545360DC6E242389CDD6E /* Pods-Runner.profile.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.profile.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.profile.xcconfig"; sourceTree = "<group>"; };
 		0578A12BD4C71E2184636D11 /* Pods-Runner.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.release.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"; sourceTree = "<group>"; };
 		1498D2321E8E86230040F4C2 /* GeneratedPluginRegistrant.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GeneratedPluginRegistrant.h; sourceTree = "<group>"; };
@@ -112,6 +118,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA0000000000000000000003 /* AetherEngine in Frameworks */,
+				AA0000000000000000000006 /* AetherFFmpegBuild in Frameworks */,
 				52FE7E483C6E0B197C88DB6C /* Pods_Runner.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -178,6 +186,7 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				AA0000000000000000000002 /* AetherPlayerPlugin.swift */,
 				97C146FA1CF9000F007C117D /* Main.storyboard */,
 				97C146FD1CF9000F007C117D /* Assets.xcassets */,
 				97C146FF1CF9000F007C117D /* LaunchScreen.storyboard */,
@@ -271,11 +280,47 @@
 			dependencies = (
 			);
 			name = Runner;
+			packageProductDependencies = (
+				AA0000000000000000000005 /* AetherEngine */,
+				AA0000000000000000000008 /* AetherFFmpegBuild */,
+			);
 			productName = Runner;
 			productReference = 97C146EE1CF9000F007C117D /* Runner.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AA0000000000000000000004 /* XCRemoteSwiftPackageReference "AetherEngine" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/yipengfei329/AetherEngine.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.36.0;
+			};
+		};
+		AA0000000000000000000009 /* XCRemoteSwiftPackageReference "FFmpegBuild" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/superuser404notfound/FFmpegBuild.git";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 3.7.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA0000000000000000000005 /* AetherEngine */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000004 /* XCRemoteSwiftPackageReference "AetherEngine" */;
+			productName = AetherEngine;
+		};
+		AA0000000000000000000008 /* AetherFFmpegBuild */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA0000000000000000000009 /* XCRemoteSwiftPackageReference "FFmpegBuild" */;
+			productName = AetherFFmpegBuild;
+		};
+/* End XCSwiftPackageProductDependency section */
 
 /* Begin PBXProject section */
 		97C146E61CF9000F007C117D /* Project object */ = {
@@ -307,6 +352,10 @@
 				Base,
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
+			packageReferences = (
+				AA0000000000000000000004 /* XCRemoteSwiftPackageReference "AetherEngine" */,
+				AA0000000000000000000009 /* XCRemoteSwiftPackageReference "FFmpegBuild" */,
+			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -465,6 +514,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA0000000000000000000001 /* AetherPlayerPlugin.swift in Sources */,
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 			);
@@ -544,7 +594,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;
@@ -590,7 +640,7 @@
 				DEVELOPMENT_TEAM = 3EZ8YQY6LK;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MoviePilotWidgets/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -617,7 +667,7 @@
 				DEVELOPMENT_TEAM = 3EZ8YQY6LK;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MoviePilotWidgets/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -643,7 +693,7 @@
 				DEVELOPMENT_TEAM = 3EZ8YQY6LK;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MoviePilotWidgets/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -761,7 +811,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -813,7 +863,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = iphoneos;

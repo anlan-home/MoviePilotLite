@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'player_engine.dart';
+import '../aether/aether_engine.dart';
 import '../exo/exo_engine.dart';
 import '../native_surface/native_surface_engine.dart';
 import '../exo/exo_ffmpeg_engine.dart';
@@ -87,10 +88,10 @@ class PlayerManager {
 
   /// 根据设置和 URL 自动选择最佳引擎
   PlayerEngineType selectEngine(String url) {
-    // iOS 上 ExoPlayer 不存在(video_player 走 AVPlayer);原生 Surface 内核的
-    // 平台实现仅 Android(Kotlin + SurfaceView)——iOS 用 video_player 兜底。
+    // iOS 只有 AetherEngine 一条原生内核（FFmpeg 拆、Apple 播），服务端转码的
+    // HLS 也由引擎内部的 AVPlayer 旁路承接；安卓的 Exo/MPV 内核在 iOS 不存在。
     if (Platform.isIOS) {
-      return PlayerEngineType.exo;
+      return PlayerEngineType.aether;
     }
 
     // ISO 原盘的本地代理流：直达原生内核，别让 Exo 白试一轮（真机实证要等 5 秒
@@ -291,6 +292,9 @@ class PlayerManager {
 
   PlayerEngine _createEngineInstance(PlayerEngineType type) {
     switch (type) {
+      case PlayerEngineType.aether:
+        // iOS 原生内核：AetherEngine（FFmpeg 拆、Apple 播）
+        return AetherIosEngine();
       case PlayerEngineType.nativeSurface:
         // 定制 libmpv 原生 Surface 直渲引擎（弹幕卡顿根治内核）
         return NativeSurfaceEngine();
@@ -302,6 +306,8 @@ class PlayerManager {
         }
         return ExoPlayerEngine();
       case PlayerEngineType.auto:
+        // iOS 的 auto 即 Aether；安卓沿用原生内核
+        if (Platform.isIOS) return AetherIosEngine();
         return NativeSurfaceEngine(); // auto 模式下默认先尝试原生内核
     }
   }

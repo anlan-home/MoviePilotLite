@@ -1,0 +1,45 @@
+name: iOS IPA (Aether)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.2"
+          channel: "stable"
+          cache: true
+
+      - name: Flutter pub get
+        run: flutter pub get
+
+      - name: CocoaPods install
+        env:
+          TYPHOEUS_HTTP_VERSION: CURL_HTTP_VERSION_1_1
+        run: |
+          cd ios
+          pod install
+
+      - name: Build iOS (no codesign)
+        run: flutter build ios --release --no-codesign --dart-define=FLUTTER_APP_ENV=release
+
+      - name: Package IPA
+        run: |
+          cd build/ios/iphoneos
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -r -y ios-aether-unsigned.ipa Payload
+          shasum -a 256 ios-aether-unsigned.ipa > ios-aether-unsigned.ipa.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-aether-ipa
+          path: |
+            build/ios/iphoneos/ios-aether-unsigned.ipa
+            build/ios/iphoneos/ios-aether-unsigned.ipa.sha256
