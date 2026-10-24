@@ -4573,22 +4573,27 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   /// 加载章节标记（Emby/Jellyfin Chapters API），在进度条上绘制 tick
   Future<void> _loadChapters() async {
     if (_isAudio) return;
+    if (_chaptersLoaded) return;
     final svc = widget.service;
-    if (svc == null || _chaptersLoaded) return;
+    if (svc == null) return;
     try {
-      final chapters = await svc.getChapters(_activeMedia.id);
-      if (!mounted || chapters.isEmpty) return;
+      // 进度条只画「片头 / 片尾」两个位置:整轨压制的片源常有 20~30 个章节
+      // (年会不能停！2 有 26 章,每 5 分钟一条),逐章画刻度会让进度条看起来
+      // "断成一节一节"(2026-10-24 用户反馈)。拿不到片头片尾信息则不画刻度。
+      final skip = _introSkip ?? await svc.getIntroSkipInfo(_activeMedia.id);
+      if (!mounted) return;
       _chaptersLoaded = true;
-      final markers = chapters
-          .map((c) => c.startDuration.inMilliseconds)
-          .where((ms) => ms > 1000)
-          .toList();
+      final markers = <int>[
+        if (skip?.hasIntro == true) skip!.introStartDuration.inMilliseconds,
+        if (skip?.hasCredits == true)
+          skip!.creditsStartDuration?.inMilliseconds ?? 0,
+      ].where((ms) => ms > 1000).toList();
       if (markers.isNotEmpty) {
         setState(() => _chapterMarkers = markers);
-        AppLog.i('Player', '章节标记: ${markers.length} 个 (${chapters.map((c) => c.name).join(' / ')})');
+        AppLog.i('Player', '进度条标记(仅片头片尾): $markers');
       }
     } catch (e) {
-      AppLog.d('Player', '加载章节标记失败: $e');
+      AppLog.d('Player', '加载片头片尾标记失败: $e');
     }
   }
 
