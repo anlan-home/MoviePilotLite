@@ -28,7 +28,7 @@ final class AetherPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
   }
 
   func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) ->
-    NSObject & FlutterPlatformView
+    FlutterPlatformView
   {
     MainActor.assumeIsolated {
       AetherPlayerPlatformView(frame: frame, viewId: viewId, messenger: messenger, args: args)
