@@ -18,6 +18,7 @@ import '../../player/core/player_screen_awake.dart';
 import '../../player/subtitle/libass_style.dart';
 import '../../player/subtitle/ass_style_normalizer.dart';
 import '../../player/core/player_manager.dart';
+import '../../player/native_surface/native_surface_engine.dart';
 import '../../player/subtitle/subtitle_overlay.dart';
 import '../../player/subtitle/libass_bridge.dart';
 import '../../player/danmaku/danmaku_controller.dart';
@@ -263,6 +264,30 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   MediaItem? _currentMedia;
   MediaItem get _activeMedia => _currentMedia ?? widget.media;
   bool get _isAudio => _activeMedia.type == MediaType.audio;
+
+  /// 是否杜比视界 Profile 5(单层 IPTPQc2、无 HDR10 基础层)。
+  ///
+  /// P5 交给原生内核时必须**软解**:硬解帧不带杜比 RPU,libplacebo 无法做
+  /// reshape → 整片偏绿(2026-10-24 真机实证)。P7/P8.1 有 HDR10 基础层,
+  /// 硬解正常,不要浪费 CPU 去软解。
+  bool get _isDolbyVisionProfile5 => _isDolbyVisionP5(_activeMedia);
+
+  bool _isDolbyVisionP5(MediaItem media) {
+    final vt = media.videoTracks;
+    if (vt == null || vt.isEmpty) return false;
+    for (final t in vt) {
+      final range = (t['VideoRange'] ?? '').toString();
+      final sub = (t['ExtendedVideoSubType'] ?? '').toString();
+      if (range == 'DolbyVision' && sub.contains('DoviProfile5')) return true;
+      if (range == 'DolbyVision' && sub.isEmpty) {
+        // 极端情况:服务器没给 ExtendedVideoSubType。P5 没有色彩传输标记
+        // (HDR10 兼容的 P7/P8.1 会带 smpte2084),按"无标记"视作 P5。
+        final transfer = (t['ColorTransfer'] ?? '').toString();
+        if (transfer.isEmpty) return true;
+      }
+    }
+    return false;
+  }
   bool _audioOpening = false;
 
   /// 是否有可用的选集列表（上一集/下一集按钮据此显示）
@@ -417,6 +442,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         (eps == null || eps.isEmpty) ? 0 : eps.indexWhere((e) => e.id == widget.media.id);
     if (_currentEpisodeIndex < 0) _currentEpisodeIndex = 0;
     _currentMedia = widget.media;
+    // 杜比 P5 → 原生内核必须软解(硬解丢 RPU 会偏绿),须在创建引擎之前确定
+    NativeSurfaceEngine.forceSoftwareDecode = _isDolbyVisionProfile5;
     _initPlayer();
     _loadDanmaku();
     _loadIntroSkip();
@@ -3014,6 +3041,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
       // Audio may start reporting synchronously during open; use its new ID.
       if (audio) _currentMedia = episode;
+      // 杜比 P5 → 原生内核软解:必须在 open 之前按新一集判定
+      // (硬解帧不带杜比 RPU,libplacebo 无法 reshape → 偏绿)
+      NativeSurfaceEngine.forceSoftwareDecode = _isDolbyVisionP5(episode);
       // 重新打开新集数
       await _engine?.open(
         url: url, httpHeaders: headers, autoPlay: !_isAppBackground,
