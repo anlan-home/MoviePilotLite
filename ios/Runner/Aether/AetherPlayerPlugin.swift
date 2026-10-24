@@ -23,7 +23,7 @@ final class AetherPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
     super.init()
   }
 
-  func createArgsCodec() -> (FlutterMessageCodec & NSObjectProtocol)? {
+  func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol {
     FlutterStandardMessageCodec.sharedInstance()
   }
 
