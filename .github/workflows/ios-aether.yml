@@ -2,6 +2,9 @@ name: iOS IPA (Aether)
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - feat/ios-aether-engine
 
 jobs:
   build-ios:
