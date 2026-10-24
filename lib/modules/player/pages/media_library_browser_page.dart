@@ -62,7 +62,12 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
       if (kitServer == null) {
         setState(() {
           _loading = false;
-          _error = '媒体服务器不可达\n请检查服务端「媒体服务器」配置,下线的那台建议先停用';
+          // 指定了库所属服务器却用不上时不能说"不可达":类型不支持(如 Plex)
+          // 也会走到这里,分开提示才不至于误导。
+          final requested = _serverName?.trim() ?? '';
+          _error = requested.isNotEmpty
+              ? '库所属的「$requested」媒体服务器不可用\n请检查该服务器的地址与账号密码(内嵌播放支持 Emby / Jellyfin / 飞牛)'
+              : '媒体服务器不可达\n请检查服务端「媒体服务器」配置,下线的那台建议先停用';
         });
         return;
       }
@@ -91,40 +96,73 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
     }
   }
 
-  /// 挑一台**确实在线**的媒体服务器。
+  /// 探测某台服务器下有哪些库；返回 null 表示该服务器不可用。
+  Future<List<String>?> _probeLibraries(ApiClient api, String serverName) async {
+    try {
+      final probe = await api.get<dynamic>(
+        '/api/v1/mediaserver/library?server=$serverName&hidden=true',
+      );
+      if ((probe.statusCode ?? 0) != 200) return null;
+      final data = probe.data;
+      dynamic list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map) {
+        list = data['value'] ?? data['data'];
+        if (list is Map) list = list['value'];
+      }
+      if (list is! List) return const [];
+      return list
+          .whereType<Map>()
+          .map((e) => (e['id'] ?? e['item_id'])?.toString())
+          .whereType<String>()
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 挑一台**确实在线、且目标库确实属于它**的媒体服务器。
   ///
   /// 背景(2026-10-10 v3 实测):v3 常同时配多台媒体服务器(如 jellyfin + emby),
   /// 其中一台下线时 MP 的代理接口会对它返回 502;而这里原先固定用第一台,
-  /// 结果「点击媒体库」直接加载失败。现在:**库所属服务器优先**(路由里的
-  /// serverName,其次按库名匹配),其余按启用顺序;先用 MP 的库列表接口探测
-  /// (2xx 视为在线),再构造 kit 服务器 —— 点哪台的库就打开哪台。
+  /// 结果「点击媒体库」直接加载失败。
+  ///
+  /// 2026-10-24 真机补充:路由里的 serverName 实际是 MP 的**服务端类型**
+  /// (emby / jellyfin / trimemedia),而服务器显示名可能是中文(飞牛)。只按
+  /// 名字匹配、匹配不上就静默换台,会拿 A 服务器的库 id 去查 B 服务器(Emby
+  /// 对不认识的父 id 返回默认列表),表现为**每个媒体库打开都一模一样**。
+  /// 现在:按名字或类型匹配候选,再用 MP 的库列表核对库归属;指定了服务器
+  /// 却用不上时直接失败,不再静默换台。
   Future<kit.MediaServer?> _pickReachableServer(
     List<MediaServer> servers,
   ) async {
     final launch = PlayerLaunchController.to;
-    final ordered = <MediaServer>[...servers];
-    final wantServer = _serverName;
-    final name = wantServer != null && wantServer.isNotEmpty
-        ? wantServer
-        : _libraryName;
-    if (name != null && name.isNotEmpty) {
-      final index = ordered.indexWhere((s) => s.name == name);
-      if (index > 0) {
-        ordered.insert(0, ordered.removeAt(index));
-      }
-    }
     final api = Get.find<ApiClient>();
-    for (final server in ordered) {
-      try {
-        final probe = await api.get<dynamic>(
-          '/api/v1/mediaserver/library?server=${server.name}',
-        );
-        if ((probe.statusCode ?? 0) != 200) continue;
-      } catch (_) {
-        continue;
+    final requested = _serverName?.trim().toLowerCase() ?? '';
+
+    final candidates = requested.isEmpty
+        ? <MediaServer>[...servers]
+        : servers
+            .where((s) =>
+                s.name.toLowerCase() == requested ||
+                s.type.toLowerCase() == requested)
+            .toList();
+    if (requested.isNotEmpty && candidates.isEmpty) return null;
+
+    for (final server in candidates) {
+      final ids = await _probeLibraries(api, server.name);
+      if (ids == null) continue; // 该服务器不可用
+      if (_libraryId != null &&
+          _libraryId!.isNotEmpty &&
+          ids.isNotEmpty &&
+          !ids.contains(_libraryId)) {
+        continue; // 目标库不在这台服务器下
       }
       final kitServer = await launch.toKitServer(server, isDefault: true);
-      if (kitServer != null) return kitServer;
+      if (kitServer == null) continue;
+      if (launch.serviceFor(kitServer) == null) continue; // 类型不支持/缺账号
+      return kitServer;
     }
     return null;
   }
