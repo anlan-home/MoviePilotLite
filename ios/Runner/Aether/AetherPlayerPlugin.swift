@@ -23,17 +23,20 @@ final class AetherPlayerViewFactory: NSObject, FlutterPlatformViewFactory {
     super.init()
   }
 
-  func createArgsCodec() -> FlutterMessageCodec & NSObjectProtocol {
+  func createArgsCodec() -> (FlutterMessageCodec & NSObjectProtocol)? {
     FlutterStandardMessageCodec.sharedInstance()
   }
 
   func create(withFrame frame: CGRect, viewIdentifier viewId: Int64, arguments args: Any?) ->
     NSObject
   {
-    AetherPlayerPlatformView(frame: frame, viewId: viewId, messenger: messenger, args: args)
+    MainActor.assumeIsolated {
+      AetherPlayerPlatformView(frame: frame, viewId: viewId, messenger: messenger, args: args)
+    }
   }
 }
 
+@MainActor
 final class AetherPlayerPlatformView: NSObject, FlutterPlatformView {
   private let controller: AetherPlayerController
 
@@ -43,9 +46,12 @@ final class AetherPlayerPlatformView: NSObject, FlutterPlatformView {
     super.init()
   }
 
-  func view() -> UIView { controller.container }
+  nonisolated func view() -> UIView {
+    MainActor.assumeIsolated { controller.container }
+  }
 }
 
+@MainActor
 final class AetherPlayerController: NSObject, FlutterStreamHandler {
   let container: UIView
   private let playerView = AetherPlayerView()
@@ -95,12 +101,12 @@ final class AetherPlayerController: NSObject, FlutterStreamHandler {
     }
 
     channel.setMethodCallHandler { [weak self] call, result in
-      self?.handle(call, result: result)
+      MainActor.assumeIsolated { self?.handle(call, result: result) }
     }
     eventChannel.setStreamHandler(self)
 
     ticker = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-      self?.tick()
+      MainActor.assumeIsolated { self?.tick() }
     }
 
     if let e = engine {
@@ -250,6 +256,7 @@ final class AetherPlayerController: NSObject, FlutterStreamHandler {
     e.$state
       .receive(on: RunLoop.main)
       .sink { [weak self] state in
+        MainActor.assumeIsolated {
         guard let self else { return }
         switch state {
         case .playing: self.isPlaying = true
@@ -258,22 +265,20 @@ final class AetherPlayerController: NSObject, FlutterStreamHandler {
         default: break
         }
         self.sendState()
+        }
       }
       .store(in: &cancellables)
     e.$isBuffering.receive(on: RunLoop.main).sink { [weak self] v in
-      self?.isBuffering = v
-      self?.sendState()
+      MainActor.assumeIsolated { self?.isBuffering = v; self?.sendState() }
     }.store(in: &cancellables)
     e.$duration.receive(on: RunLoop.main).sink { [weak self] v in
-      self?.durationMs = Int(v * 1000)
-      self?.sendState()
+      MainActor.assumeIsolated { self?.durationMs = Int(v * 1000); self?.sendState() }
     }.store(in: &cancellables)
     e.$hasFirstFrameReadyForDisplay.receive(on: RunLoop.main).sink { [weak self] v in
-      self?.hasFirstFrame = v
-      self?.sendState()
+      MainActor.assumeIsolated { self?.hasFirstFrame = v; self?.sendState() }
     }.store(in: &cancellables)
     e.$subtitleCues.receive(on: RunLoop.main).sink { [weak self] cues in
-      self?.overlay.cues = cues
+      MainActor.assumeIsolated { self?.overlay.cues = cues }
     }.store(in: &cancellables)
   }
 
@@ -298,16 +303,18 @@ final class AetherPlayerController: NSObject, FlutterStreamHandler {
     ])
   }
 
-  func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
+  nonisolated func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink)
     -> FlutterError?
   {
-    sink = events
-    sendState()
+    MainActor.assumeIsolated {
+      sink = events
+      sendState()
+    }
     return nil
   }
 
-  func onCancel(withArguments arguments: Any?) -> FlutterError? {
-    sink = nil
+  nonisolated func onCancel(withArguments arguments: Any?) -> FlutterError? {
+    MainActor.assumeIsolated { sink = nil }
     return nil
   }
 
@@ -323,14 +330,13 @@ final class AetherPlayerController: NSObject, FlutterStreamHandler {
     }
   }
 
-  deinit { dispose() }
 }
 
 /// 原生字幕叠加层：文本用 UILabel，位图（PGS/DVB/DVD）用 UIImageView 按
 /// 引擎给的归一化位置铺在视频区域上（canvasSize 与视频一致时直接按容器映射）。
 final class AetherSubtitleOverlay: UIView {
   var cues: [SubtitleCue] = [] {
-    didSet { needsLayout = true }
+    didSet { setNeedsLayout() }
   }
 
   private let textLabel = UILabel()
