@@ -129,8 +129,15 @@ class SearchMediaResultPage extends GetView<SearchMediaController> {
       final errorText = controller.errorText.value;
 
       final showSkeleton = isLoading && controller.items.isEmpty;
+      final showEmpty = errorText == null &&
+          !isLoading &&
+          !controller.isProgressActive.value &&
+          controller.visibleItems.isEmpty;
       return CustomScrollView(
         slivers: [
+          CupertinoSliverRefreshControl(
+            onRefresh: controller.performSearch,
+          ),
           if (immersive)
             _buildImmersiveHeader(context)
           else
@@ -149,6 +156,11 @@ class SearchMediaResultPage extends GetView<SearchMediaController> {
           if (errorText != null)
             SliverToBoxAdapter(
               child: _buildErrorState(context, errorText, immersive: immersive),
+            )
+          else if (showEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyState(context, immersive: immersive),
             )
           else
             SliverPadding(
@@ -169,13 +181,14 @@ class SearchMediaResultPage extends GetView<SearchMediaController> {
               ),
             ),
 
-          SliverToBoxAdapter(
-            child: SizedBox(
-              height: immersive
-                  ? _floatingBarHeight + 32
-                  : _bottomSpacer(context),
+          if (!showEmpty)
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: immersive
+                    ? _floatingBarHeight + 32
+                    : _bottomSpacer(context),
+              ),
             ),
-          ),
         ],
       );
     });
@@ -620,12 +633,47 @@ class SearchMediaResultPage extends GetView<SearchMediaController> {
   }
 
   Widget _buildEmptyState(BuildContext context, {required bool immersive}) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Text(
-        '暂无搜索结果',
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: immersive ? Colors.white70 : null,
+    final filteredOut = controller.items.isNotEmpty;
+    final textColor =
+        immersive ? Colors.white70 : Theme.of(context).colorScheme.onSurface;
+    final subColor = immersive
+        ? Colors.white54
+        : Theme.of(context).colorScheme.onSurfaceVariant;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              filteredOut
+                  ? Icons.filter_alt_off_outlined
+                  : Icons.search_off_rounded,
+              size: 40,
+              color: subColor.withOpacity(0.6),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              filteredOut ? '筛选后没有匹配的资源' : '没有搜索到相关资源',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: textColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              filteredOut ? '试试放宽或清空筛选条件' : '换个关键词,或调整站点范围后重新搜索',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: subColor,
+              ),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: controller.performSearch,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('重新搜索'),
+            ),
+          ],
         ),
       ),
     );

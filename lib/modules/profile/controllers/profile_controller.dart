@@ -1,6 +1,8 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart' as dio;
 import 'package:get/get.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/agent/controllers/agent_controller.dart';
 import 'package:moviepilot_mobile/modules/login/models/login_profile.dart';
@@ -9,6 +11,7 @@ import 'package:moviepilot_mobile/modules/login/repositories/auth_repository.dar
 import 'package:moviepilot_mobile/modules/profile/models/user_info.dart';
 import 'package:moviepilot_mobile/modules/site/controllers/site_controller.dart';
 import 'package:moviepilot_mobile/modules/system_message/controllers/system_message_controller.dart';
+import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/ios_shared_session_service.dart';
 
@@ -18,6 +21,7 @@ class ProfileController extends GetxController {
   final _authRepository = Get.find<AuthRepository>();
   final _iosSharedSessionService = Get.find<IosSharedSessionService>();
   final _talker = Get.find<AppLog>();
+  final _apiClient = Get.find<ApiClient>();
 
   /// 当前登录配置（登录档案）
   final currentProfile = Rxn<LoginProfile>();
@@ -105,6 +109,45 @@ class ProfileController extends GetxController {
       _talker.error('获取用户信息失败: $e');
     } finally {
       isLoading.value = false;
+    }
+  }
+
+  /// 从相册选择并上传头像（POST /api/v1/user/avatar/{user_id} multipart）。
+  /// 返回 null 表示成功，否则为错误文案。
+  Future<String?> pickAndUploadAvatar() async {
+    final info = currentUserInfo.value;
+    if (info == null) return '用户信息未加载';
+    try {
+      final picked = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 1024,
+        maxHeight: 1024,
+        imageQuality: 88,
+      );
+      if (picked == null) return '';
+      final form = dio.FormData.fromMap({
+        'file': await dio.MultipartFile.fromFile(
+          picked.path,
+          filename: picked.name,
+        ),
+      });
+      final response = await _apiClient.postMultipart<dynamic>(
+        '/api/v1/user/avatar/${info.id}',
+        form,
+      );
+      final status = response.statusCode ?? 0;
+      if (status >= 400) {
+        return '上传失败 (HTTP $status)';
+      }
+      final data = response.data;
+      if (data is Map && data['success'] == false) {
+        return data['message']?.toString() ?? '上传失败';
+      }
+      await loadCurrentUserInfo();
+      return null;
+    } catch (e, st) {
+      _talker.handle(e, stackTrace: st, message: '上传头像失败');
+      return '上传失败，请稍后重试';
     }
   }
 

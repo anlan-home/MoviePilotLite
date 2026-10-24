@@ -6,22 +6,15 @@ import 'package:moviepilot_mobile/modules/media_detail/models/season_episode_det
 import 'package:moviepilot_mobile/modules/subscribe/controllers/subscribe_service.dart';
 import 'package:moviepilot_mobile/modules/subscribe/models/subscribe_models.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
-import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/services/server_api_version_service.dart';
 import 'package:moviepilot_mobile/utils/media_identity_util.dart';
 
 class MediaDetailService extends GetxService {
   final _apiClient = Get.find<ApiClient>();
-  final _appService = Get.find<AppService>();
   final _log = Get.find<AppLog>();
   final _subscribeService = Get.put(SubscribeService());
   ServerApiVersionService get _serverApiVersionService =>
       Get.find<ServerApiVersionService>();
-
-  String? _getToken() =>
-      _appService.loginResponse?.accessToken ??
-      _appService.latestLoginProfileAccessToken ??
-      _apiClient.token;
 
   Future<List<MediaNotExists>> getMediaNotExists(
     Map<String, dynamic> payload,
@@ -41,35 +34,6 @@ class MediaDetailService extends GetxService {
           .toList();
     } catch (e) {
       _log.handle(e, message: '获取媒体不存在信息失败');
-      return [];
-    }
-  }
-
-  Future<List<SeasonInfo>> getSeasonInfo({
-    required String mediaId,
-    required String season,
-    required String title,
-    required String year,
-  }) async {
-    try {
-      final payload = {
-        'media_id': mediaId,
-        'season': season,
-        'title': title,
-        'year': year,
-      };
-      final response = await _apiClient.post(
-        '/api/v1/mediaserver/seasoninfo',
-        data: payload,
-      );
-      if (response.statusCode != 200) {
-        throw ApiAuthException(response.statusCode!, response.statusMessage);
-      }
-      return (response.data! as List<dynamic>)
-          .map((e) => SeasonInfo.fromJson(e))
-          .toList();
-    } catch (e) {
-      _log.handle(e, message: '获取季信息失败');
       return [];
     }
   }

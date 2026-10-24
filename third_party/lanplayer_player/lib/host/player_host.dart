@@ -63,6 +63,11 @@ class PlaybackResolver {
     List<MediaItem>? episodes,
   }) async {
     final item = await service.getItemDetails(itemId);
+    if (item.type == MediaType.audio &&
+        (item.id != itemId || (item.videoTracks?.isNotEmpty ?? false) ||
+         episodes?.any((track) => track.type != MediaType.audio || track.id.isEmpty) == true)) {
+      throw StateError('音频播放条目或队列无效');
+    }
     final url = await service.getStreamUrl(itemId, quality: quality);
     final progress = item.watchProgress;
     final duration = item.duration;

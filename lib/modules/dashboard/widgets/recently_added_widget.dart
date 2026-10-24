@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/utils/toast_util.dart';
+import 'package:moviepilot_mobile/modules/dashboard/controllers/dashboard_controller.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/mediaserver/controllers/mediaserver_controller.dart';
 import 'package:moviepilot_mobile/modules/player/controllers/player_launch_controller.dart';
@@ -35,6 +37,10 @@ class RecentlyAddedWidget extends StatelessWidget {
     return Obx(() {
       final latestMediaList = mediaServerController.latestMediaList;
       if (latestMediaList.value.isEmpty) {
+        final dashboardController = Get.find<DashboardController>();
+        if (dashboardController.isWidgetLoading('最近添加')) {
+          return const DashboardPosterGridSkeleton(itemCount: 6);
+        }
         return const _EmptyState(
           icon: CupertinoIcons.film,
           title: '暂无最近添加内容',
@@ -556,9 +562,9 @@ class _PosterCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
           boxShadow: [
             BoxShadow(
-              color: palette.shadow.withValues(alpha: 0.28),
-              blurRadius: 10,
-              offset: const Offset(0, 4),
+              color: palette.shadow.withValues(alpha: 0.14),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
             ),
           ],
         ),

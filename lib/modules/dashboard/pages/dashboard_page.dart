@@ -4,26 +4,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/gen/assets.gen.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_shortcuts.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_skeletons.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/dashboard_widget_styles.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/cpu_widget.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/media_recommend_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/media_stats_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/memory_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/my_media_library_widget.dart';
 import 'package:moviepilot_mobile/modules/player/controllers/player_launch_controller.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/network_traffic_widget.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/quick_actions_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/recent_added_widget.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/recent_imports_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/recently_added_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/recently_playing_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/real_time_speed_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/schedule_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/storage_widget.dart';
 import 'package:moviepilot_mobile/modules/dashboard/widgets/shortcut_popover.dart';
-import 'package:moviepilot_mobile/modules/network_test/controllers/network_test_controller.dart';
-import 'package:moviepilot_mobile/modules/network_test/pages/network_test_page.dart';
-import 'package:moviepilot_mobile/modules/system_health/controllers/system_health_controller.dart';
-import 'package:moviepilot_mobile/modules/system_health/pages/system_health_page.dart';
-import 'package:moviepilot_mobile/modules/recognize/controllers/recognize_controller.dart';
-import 'package:moviepilot_mobile/modules/recognize/pages/recognize_page.dart';
+import 'package:moviepilot_mobile/modules/dashboard/widgets/system_info_widget.dart';
 import 'package:moviepilot_mobile/modules/system_message/controllers/system_message_controller.dart';
 
 import 'package:moviepilot_mobile/services/app_service.dart';
@@ -31,6 +31,7 @@ import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/utils/size_formatter.dart';
 import 'package:moviepilot_mobile/widgets/constrained_page_content.dart';
 import 'package:moviepilot_mobile/widgets/dashboard_scaffold.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 import '../controllers/dashboard_controller.dart';
 
@@ -55,12 +56,8 @@ class DashboardPage extends GetView<DashboardController> {
                 await controller.refreshData();
               },
             ),
-            SliverToBoxAdapter(
-              child: ConstrainedPageContent(
-                padding: const EdgeInsets.only(top: 20),
-                child: _buildStitchLayout(context),
-              ),
-            ),
+            const SliverToBoxAdapter(child: SizedBox(height: 20)),
+            _buildStitchLayout(context),
             SliverToBoxAdapter(child: SizedBox(height: _bottomSpacer(context))),
           ],
         ),
@@ -246,41 +243,154 @@ class DashboardPage extends GetView<DashboardController> {
     );
   }
 
+  /// 各区块作为 SliverList 子项按需挂载：滚到视口（含缓存区）附近才 build，
+  /// 一屏之外的海报墙和图表不再在首屏一起构建、布局。
   Widget _buildStitchLayout(BuildContext context) {
+    final appService = Get.find<AppService>();
+    final isSuperuser = appService.isSuperuser;
+    final canDiscovery = appService.canDiscovery;
+
     return Obx(() {
       final visible = controller.displayedWidgets.toSet();
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (_showAny(visible, {'实时速率', '存储空间', 'CPU', '内存'}))
-            _buildServerStatusSection(context, visible),
+      const serverStatusNames = {'实时速率', '存储空间', 'CPU', '内存'};
+      const mediaBrowseNames = {'最近添加', '我的媒体库', '继续观看'};
+      final sections = <_DashboardSection>[
+        if (_showAny(visible, serverStatusNames))
+          _DashboardSection(
+            id: 'server-status',
+            widgetNames: visible.intersection(serverStatusNames),
+            child: _buildServerStatusSection(context, visible),
+          ),
 
-          if (_showAny(visible, {'媒体统计', '存储空间'}))
-            _buildLibraryCapacitySection(context),
-
-          if (_showAny(visible, {'最近添加', '我的媒体库', '继续观看'}))
-            _buildMediaBrowseSection(context, visible),
-          if (visible.contains('最近入库'))
-            _buildCardSection(
-              child: const RecentAddedWidget(),
-              onTapMore: () => Get.toNamed('/media-organize'),
+        if (visible.contains('快捷操作') && isSuperuser)
+          _DashboardSection(
+            id: 'quick-actions',
+            widgetNames: const {},
+            child: _buildOpenSection(
+              title: '快捷操作',
+              child: const QuickActionsWidget(),
             ),
-          if (visible.contains('后台任务'))
-            _buildOpenSection(
-              title: '任务',
+          ),
+
+        if (visible.contains('存储空间'))
+          _DashboardSection(
+            id: 'library-capacity',
+            widgetNames: const {'存储空间'},
+            child: _buildLibraryCapacitySection(context),
+          ),
+
+        if (visible.contains('媒体统计'))
+          _DashboardSection(
+            id: 'media-stats',
+            widgetNames: const {'媒体统计'},
+            child: _buildOpenSection(
+              title: '媒体统计',
+              child: const MediaStatsWidget(),
+            ),
+          ),
+
+        if (visible.contains('推荐媒体') && canDiscovery)
+          _DashboardSection(
+            id: 'media-recommend',
+            widgetNames: const {'推荐媒体'},
+            child: _buildOpenSection(
+              title: '推荐媒体',
+              child: const MediaRecommendWidget(),
+            ),
+          ),
+
+        if (_showAny(visible, mediaBrowseNames))
+          _DashboardSection(
+            id: 'media-browse',
+            widgetNames: visible.intersection(mediaBrowseNames),
+            child: _buildMediaBrowseSection(context, visible),
+          ),
+
+        if (visible.contains('最近入库'))
+          _DashboardSection(
+            id: 'recent-added',
+            widgetNames: const {'最近入库'},
+            child: _buildOpenSection(
+              title: DashboardController.displayNameOf('最近入库'),
+              actionLabel: '查看详情',
+              onTapMore: () => Get.toNamed('/media-organize'),
+              child: const DashboardMetricCard(
+                padding: EdgeInsets.all(16),
+                child: RecentAddedWidget(),
+              ),
+            ),
+          ),
+
+        if (visible.contains('近期整理'))
+          _DashboardSection(
+            id: 'recent-imports',
+            widgetNames: const {'近期整理'},
+            child: _buildOpenSection(
+              title: '近期整理',
+              actionLabel: '查看全部',
+              onTapMore: () => Get.toNamed('/media-organize'),
+              child: const DashboardMetricCard(
+                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: RecentImportsWidget(),
+              ),
+            ),
+          ),
+
+        // 服务端 dashboard/schedule 仅超级管理员可访问，与 /background-task-list 路由守卫保持一致
+        if (visible.contains('后台任务') && isSuperuser)
+          _DashboardSection(
+            id: 'schedule',
+            widgetNames: const {'后台任务'},
+            child: _buildOpenSection(
+              title: '后台任务',
               child: const ScheduleWidget(),
               actionLabel: '查看全部',
               onTapMore: () => Get.toNamed('/background-task-list'),
             ),
-          if (visible.contains('网络流量') && !visible.contains('实时速率'))
-            _buildCardSection(
+          ),
+
+        if (visible.contains('系统信息'))
+          _DashboardSection(
+            id: 'system-info',
+            widgetNames: const {'系统信息'},
+            child: _buildOpenSection(
+              title: '系统信息',
+              child: const SystemInfoWidget(),
+            ),
+          ),
+
+        if (visible.contains('网络流量') && !visible.contains('实时速率'))
+          _DashboardSection(
+            id: 'network-traffic',
+            widgetNames: const {'网络流量'},
+            child: _buildCardSection(
               title: '网络流量',
               child: const NetworkTrafficWidget(),
               showBorder: false,
             ),
-          if (visible.contains('媒体统计') && !visible.contains('存储空间'))
-            _buildCardSection(title: '媒体统计', child: const MediaStatsWidget()),
-        ],
+          ),
+      ];
+      // 配置（本地或服务端）还没读到时 displayedWidgets 为空，先给一个
+      // 与默认布局同构的骨架页，避免首屏出现整页空白。
+      if (sections.isEmpty) {
+        return SliverToBoxAdapter(
+          child: ConstrainedPageContent(
+            child: const DashboardFirstPaintSkeleton(),
+          ),
+        );
+      }
+      return SliverList(
+        delegate: SliverChildListDelegate([
+          for (final section in sections)
+            _DashboardSectionActivator(
+              key: ValueKey(section.id),
+              controller: controller,
+              widgetNames: section.widgetNames,
+              child: ConstrainedPageContent(
+                child: SizedBox(width: double.infinity, child: section.child),
+              ),
+            ),
+        ]),
       );
     });
   }
@@ -309,8 +419,8 @@ class DashboardPage extends GetView<DashboardController> {
     if (visible.contains('最近添加')) {
       rails.add(
         _buildMediaRail(
-          title: '最近添加',
-          subtitle: '新入库的海报墙',
+          title: DashboardController.displayNameOf('最近添加'),
+          subtitle: '媒体服务器新入库的海报墙',
           icon: CupertinoIcons.sparkles,
           accentColor: palette.primary,
           actionLabel: '查看全部',
@@ -330,13 +440,16 @@ class DashboardPage extends GetView<DashboardController> {
             onTap: (library) {
               // 管理员进入 MP 内嵌媒体库浏览;普通用户维持网页方式
               if (PlayerLaunchController.to.canNativePlay) {
-                Get.toNamed('/media-library-browser', arguments: {
-                  'libraryId': library.id,
-                  'libraryName': library.name,
-                  // 库所属媒体服务器:v3 常同时配多台(jellyfin + emby),
-                  // 带上它才能保证"点哪台的库就打开哪台"
-                  'serverName': library.server,
-                });
+                Get.toNamed(
+                  '/media-library-browser',
+                  arguments: {
+                    'libraryId': library.id,
+                    'libraryName': library.name,
+                    // 库所属媒体服务器:v3 常同时配多台(jellyfin + emby),
+                    // 带上它才能保证「点哪台的库就打开哪台」
+                    'serverName': library.server,
+                  },
+                );
                 return;
               }
               WebUtil.open(url: library.link);
@@ -463,7 +576,6 @@ class DashboardPage extends GetView<DashboardController> {
   }
 
   Widget _buildServerStatusSection(BuildContext context, Set<String> visible) {
-    final palette = DashboardPalette.of(context);
     final cards = <Widget>[];
     if (visible.contains('实时速率')) {
       cards.add(
@@ -493,14 +605,7 @@ class DashboardPage extends GetView<DashboardController> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildSectionTitle(
-            title: '状态',
-            action: DashboardInfoPill(
-              text: '运行正常',
-              color: palette.successAccent,
-              icon: CupertinoIcons.circle_fill,
-            ),
-          ),
+          _buildSectionTitle(title: '状态', action: _buildHealthPill(context)),
           const SizedBox(height: 16),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -520,19 +625,42 @@ class DashboardPage extends GetView<DashboardController> {
     );
   }
 
+  /// 状态胶囊根据 CPU 与内存占用给出「运行正常 / 负载较高」提示
+  Widget _buildHealthPill(BuildContext context) {
+    final palette = DashboardPalette.of(context);
+    return Obx(() {
+      final cpu = controller.cpuUsage.value;
+      final memory = controller.memoryInfo.value?.usage ?? 0;
+      final busy = cpu >= 85 || memory >= 90;
+      return DashboardInfoPill(
+        text: busy ? '负载较高' : '运行正常',
+        color: busy ? palette.warningAccent : palette.successAccent,
+        icon: busy
+            ? CupertinoIcons.exclamationmark_circle_fill
+            : CupertinoIcons.circle_fill,
+      );
+    });
+  }
+
   Widget _buildLibraryCapacitySection(BuildContext context) {
     return Obx(() {
       final palette = DashboardPalette.of(context);
       final storage = controller.storageData;
-      final stats = controller.statisticData.value;
-      final totalStorage = (storage['total_storage'] ?? 0.0) as double;
-      final movieCount = stats?.movie_count ?? 0;
-      final tvCount = stats?.tv_count ?? 0;
-      final episodeCount = stats?.episode_count ?? 0;
+      final totalStorage = ((storage['total_storage'] ?? 0) as num).toDouble();
+      final usedStorage = ((storage['used_storage'] ?? 0) as num).toDouble();
+      final freeStorage = (totalStorage - usedStorage).clamp(
+        0.0,
+        double.infinity,
+      );
+      final progress = totalStorage > 0
+          ? (usedStorage / totalStorage).clamp(0.0, 1.0)
+          : 0.0;
 
       return Padding(
         padding: const EdgeInsets.only(bottom: 32),
-        child: DashboardMetricCard(
+        child: Skeletonizer(
+          enabled: storage.isEmpty,
+          child: DashboardMetricCard(
           padding: const EdgeInsets.all(20),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -557,40 +685,52 @@ class DashboardPage extends GetView<DashboardController> {
                 ],
               ),
               const SizedBox(height: 14),
-              Text(
+              DashboardValueText(
                 totalStorage > 0
                     ? SizeFormatter.formatSize(totalStorage, 1)
                     : '0 B',
+                fontSize: 40,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '已使用 ${(progress * 100).toStringAsFixed(1)}%',
                 style: TextStyle(
-                  fontSize: 40,
-                  fontWeight: FontWeight.w800,
-                  color: palette.titleText,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                  color: palette.mutedText,
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 12),
+              DashboardProgressBar(
+                value: progress,
+                color: palette.primary,
+                backgroundColor: palette.divider,
+                height: 6,
+              ),
+              const SizedBox(height: 18),
               Container(height: 1, color: palette.divider),
               const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
                     child: DashboardMiniStat(
-                      label: '电影',
-                      value: '$movieCount',
+                      label: '已用',
+                      value: SizeFormatter.formatSize(usedStorage, 1),
                       valueColor: palette.titleText,
                     ),
                   ),
                   Expanded(
                     child: DashboardMiniStat(
-                      label: '剧集',
-                      value: '$tvCount',
-                      valueColor: palette.titleText,
+                      label: '可用',
+                      value: SizeFormatter.formatSize(freeStorage, 1),
+                      valueColor: palette.successAccent,
                       crossAxisAlignment: CrossAxisAlignment.center,
                     ),
                   ),
                   Expanded(
                     child: DashboardMiniStat(
-                      label: '集数',
-                      value: '$episodeCount',
+                      label: '总容量',
+                      value: SizeFormatter.formatSize(totalStorage, 1),
                       valueColor: palette.titleText,
                       crossAxisAlignment: CrossAxisAlignment.end,
                     ),
@@ -598,6 +738,7 @@ class DashboardPage extends GetView<DashboardController> {
                 ],
               ),
             ],
+          ),
           ),
         ),
       );
@@ -694,7 +835,6 @@ class DashboardPage extends GetView<DashboardController> {
 
   /// 显示捷径
   void _showShortcuts(BuildContext context) {
-    final isSuperuser = Get.find<AppService>().isSuperuser;
     final overlay = Overlay.of(context);
 
     // 计算按钮在屏幕中的位置，用于锚定菜单
@@ -703,55 +843,7 @@ class DashboardPage extends GetView<DashboardController> {
     final target = box.localToGlobal(Offset.zero);
     final size = box.size;
 
-    final shortcuts = <ShortcutItem>[
-      ShortcutItem(
-        icon: CupertinoIcons.textformat,
-        title: '识别',
-        subtitle: '标题/副标题识别',
-        onTap: () => _showRecognizeModal(context),
-      ),
-      const ShortcutItem(
-        icon: CupertinoIcons.settings,
-        title: 'TODO: 规则',
-        subtitle: '规则测试',
-      ),
-      ShortcutItem(
-        icon: CupertinoIcons.doc_text,
-        title: '日志',
-        subtitle: '实时日志',
-        onTap: () => Get.toNamed('/server-log'),
-      ),
-      ShortcutItem(
-        icon: CupertinoIcons.desktopcomputer,
-        title: '网络测试',
-        subtitle: '网速连通性测试',
-        onTap: () => _showNetworkTestModal(context),
-      ),
-      const ShortcutItem(
-        icon: CupertinoIcons.text_alignleft,
-        title: 'TODO: 词表',
-        subtitle: '词表设置',
-      ),
-      ShortcutItem(
-        icon: CupertinoIcons.cube_box,
-        title: '缓存',
-        subtitle: '管理缓存',
-        onTap: () => Get.toNamed('/cache'),
-      ),
-      ShortcutItem(
-        icon: CupertinoIcons.gear_alt_fill,
-        title: '系统',
-        subtitle: '健康检查',
-        onTap: () => _showSystemHealthModal(context),
-      ),
-      if (isSuperuser)
-        ShortcutItem(
-          icon: CupertinoIcons.chat_bubble_2_fill,
-          title: '消息',
-          subtitle: '消息中心',
-          onTap: () => Get.toNamed('/system-message'),
-        ),
-    ];
+    final shortcuts = DashboardShortcuts.popoverItems(context);
 
     late OverlayEntry entry;
     entry = OverlayEntry(
@@ -772,88 +864,64 @@ class DashboardPage extends GetView<DashboardController> {
   void _showProfile(BuildContext context) {
     Get.toNamed('/profile');
   }
+}
 
-  /// 显示识别模块（Modal）
-  Future<void> _showRecognizeModal(BuildContext context) async {
-    if (Get.isRegistered<RecognizeController>()) {
-      Get.delete<RecognizeController>();
-    }
-    Get.put(RecognizeController());
-    await showModalBottomSheet<void>(
-      isScrollControlled: true,
-      useSafeArea: true,
-      isDismissible: true,
-      showDragHandle: false,
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder: (_) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.92,
-        minChildSize: 0.36,
-        maxChildSize: 1,
-        builder: (context, scrollController) => ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          child: RecognizePage(scrollController: scrollController),
-        ),
-      ),
-    );
-    if (Get.isRegistered<RecognizeController>()) {
-      Get.delete<RecognizeController>();
-    }
+/// 仪表盘的一个区块及其依赖的数据组件名；[id] 作为列表 key，
+/// 配置变更导致区块增删移位时按身份而不是下标复用元素。
+class _DashboardSection {
+  const _DashboardSection({
+    required this.id,
+    required this.widgetNames,
+    required this.child,
+  });
+
+  final String id;
+  final Set<String> widgetNames;
+  final Widget child;
+}
+
+/// 区块首次挂载（或依赖的组件集合变化）时通知控制器加载对应组件的数据。
+/// 加载会同步改写 Rx 状态，所以推到帧结束后再触发，避免在 build 阶段触发重建。
+class _DashboardSectionActivator extends StatefulWidget {
+  const _DashboardSectionActivator({
+    super.key,
+    required this.controller,
+    required this.widgetNames,
+    required this.child,
+  });
+
+  final DashboardController controller;
+  final Set<String> widgetNames;
+  final Widget child;
+
+  @override
+  State<_DashboardSectionActivator> createState() =>
+      _DashboardSectionActivatorState();
+}
+
+class _DashboardSectionActivatorState
+    extends State<_DashboardSectionActivator> {
+  @override
+  void initState() {
+    super.initState();
+    _activate(widget.widgetNames);
   }
 
-  /// 显示网络测试（Modal）
-  Future<void> _showNetworkTestModal(BuildContext context) async {
-    if (Get.isRegistered<NetworkTestController>()) {
-      Get.delete<NetworkTestController>();
-    }
-    Get.put(NetworkTestController());
-    await showModalBottomSheet<void>(
-      isScrollControlled: true,
-      useSafeArea: true,
-      isDismissible: true,
-      showDragHandle: false,
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder: (_) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.92,
-        minChildSize: 0.36,
-        maxChildSize: 1,
-        builder: (context, scrollController) => ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-          child: NetworkTestPage(scrollController: scrollController),
-        ),
-      ),
-    );
-    if (Get.isRegistered<NetworkTestController>()) {
-      Get.delete<NetworkTestController>();
-    }
+  @override
+  void didUpdateWidget(covariant _DashboardSectionActivator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final added = widget.widgetNames.difference(oldWidget.widgetNames);
+    if (added.isNotEmpty) _activate(added);
   }
 
-  /// 显示系统健康检查（Modal）
-  Future<void> _showSystemHealthModal(BuildContext context) async {
-    if (Get.isRegistered<SystemHealthController>()) {
-      Get.delete<SystemHealthController>();
-    }
-    Get.put(SystemHealthController());
-    await showModalBottomSheet<void>(
-      isScrollControlled: true,
-      useSafeArea: true,
-      isDismissible: true,
-      showDragHandle: false,
-      backgroundColor: Colors.transparent,
-      context: context,
-      builder: (_) => const FractionallySizedBox(
-        heightFactor: 0.92,
-        child: ClipRRect(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          child: SystemHealthPage(),
-        ),
-      ),
-    );
-    if (Get.isRegistered<SystemHealthController>()) {
-      Get.delete<SystemHealthController>();
-    }
+  void _activate(Set<String> names) {
+    if (names.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.controller.activateWidgets(names);
+    });
   }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

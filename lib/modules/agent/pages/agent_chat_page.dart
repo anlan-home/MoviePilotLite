@@ -1,12 +1,15 @@
 import 'dart:async';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/modules/agent/controllers/agent_controller.dart';
+import 'package:moviepilot_mobile/modules/agent/models/agent_models.dart';
 import 'package:moviepilot_mobile/modules/agent/widgets/agent_input_bar.dart';
 import 'package:moviepilot_mobile/modules/agent/widgets/agent_message_bubble.dart';
 import 'package:moviepilot_mobile/modules/agent/widgets/agent_session_panel.dart';
+import 'package:moviepilot_mobile/utils/toast_util.dart';
 
 class AgentChatPage extends StatefulWidget {
   const AgentChatPage({super.key});
@@ -269,6 +272,143 @@ class _ChatPaneState extends State<_ChatPane> {
   late final AgentController _controller;
   Worker? _messagesWorker;
 
+  /// GET /api/v1/message/agent/commands 命令面板（点击插入到输入框）。
+  Future<void> _showCommandsSheet() async {
+    ToastUtil.loading(message: '正在获取命令…');
+    List<Map<String, dynamic>> commands;
+    try {
+      commands = await _controller.fetchCommands();
+    } catch (e) {
+      ToastUtil.dismiss();
+      if (mounted) {
+        ToastUtil.error(e is StateError ? e.message.toString() : '命令列表加载失败');
+      }
+      return;
+    }
+    ToastUtil.dismiss();
+    if (!mounted) return;
+    if (commands.isEmpty) {
+      ToastUtil.info('服务端未提供命令列表');
+      return;
+    }
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 20, bottom: 6),
+              child: Text(
+                '可用命令',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            for (final command in commands)
+              ListTile(
+                dense: true,
+                title: Text(
+                  (command['command'] ??
+                          command['name'] ??
+                          command['cmd'] ??
+                          '')
+                      .toString(),
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: command['description']?.toString().isNotEmpty == true
+                    ? Text(
+                        command['description'].toString(),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      )
+                    : null,
+                onTap: () {
+                  final name =
+                      (command['command'] ??
+                              command['name'] ??
+                              command['cmd'] ??
+                              '')
+                          .toString();
+                  if (!_controller.canSend) {
+                    Navigator.of(sheetContext).pop();
+                    return;
+                  }
+                  final text = widget.controller.text.trimLeft();
+                  final arguments = text.startsWith('/')
+                      ? text.replaceFirst(RegExp(r'^/\S*\s*'), '')
+                      : text;
+                  // Slash commands are only dispatched at the start of input.
+                  widget.controller.text = '$name $arguments';
+                  widget.controller.selection = TextSelection.fromPosition(
+                    TextPosition(offset: widget.controller.text.length),
+                  );
+                  Navigator.of(sheetContext).pop();
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 选择文件并上传为助手附件（POST /api/v1/message/agent/upload）。
+  Future<void> _pickAndUploadAttachment() async {
+    if (!_controller.canSend) return;
+    try {
+      final result = await FilePicker.pickFiles(allowMultiple: false);
+      final file = result?.files.firstOrNull;
+      if (!mounted || file == null || file.path == null) return;
+      ToastUtil.loading(message: '正在上传附件…');
+      final receipt = await _controller.uploadAttachment(file.path!, file.name);
+      ToastUtil.dismiss();
+      if (!mounted || receipt == null) return;
+      ToastUtil.success('附件已就绪，发送消息后提交');
+    } catch (e) {
+      ToastUtil.dismiss();
+      ToastUtil.error(e is StateError ? e.message : '上传失败，请稍后重试');
+    }
+  }
+
+  Future<void> _downloadAttachment(AgentAttachment attachment) async {
+    ToastUtil.loading(message: '正在下载附件…');
+    try {
+      final bytes = await _controller.downloadAttachment(attachment);
+      ToastUtil.dismiss();
+      if (!mounted) return;
+      final name = attachment.name.split(RegExp(r'[/\\]')).last.trim();
+      final path = await FilePicker.saveFile(
+        fileName: name.isEmpty ? 'attachment' : name,
+        bytes: bytes,
+      );
+      if (path != null) ToastUtil.success('附件已保存');
+    } catch (e) {
+      ToastUtil.dismiss();
+      ToastUtil.error(e is StateError ? e.message.toString() : '附件下载失败');
+    }
+  }
+
+  /// 停止当前会话正在执行的任务。
+  Future<void> _stopActiveSession() async {
+    final ok = await _controller.stopActiveSession();
+    if (ok) {
+      ToastUtil.success('已发送停止指令');
+    } else {
+      ToastUtil.info('已停止本地接收，服务端未确认停止或任务已结束');
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -312,6 +452,7 @@ class _ChatPaneState extends State<_ChatPane> {
                     constraints: const BoxConstraints(maxWidth: 900),
                     child: AgentMessageBubble(
                       message: _controller.messages[index],
+                      onAttachmentTap: _downloadAttachment,
                     ),
                   );
                 },
@@ -364,14 +505,43 @@ class _ChatPaneState extends State<_ChatPane> {
             );
           }),
           Obx(
+            () => Wrap(
+              spacing: 8,
+              children: [
+                for (final attachment in _controller.pendingAttachments)
+                  InputChip(
+                    label: Text(
+                      attachment.name.isEmpty ? '附件' : attachment.name,
+                    ),
+                    onDeleted: _controller.canSend
+                        ? () =>
+                              _controller.pendingAttachments.remove(attachment)
+                        : null,
+                  ),
+                if (_controller.isUploading.value) const Text('正在上传附件…'),
+              ],
+            ),
+          ),
+          Obx(
             () => AgentInputBar(
               controller: widget.controller,
-              enabled: !_controller.isSending.value,
+              enabled: _controller.canSend,
+              hasAttachments: _controller.pendingAttachments.isNotEmpty,
               onSend: () {
+                if (!_controller.canSend) return;
                 final text = widget.controller.text;
+                unawaited(_controller.sendMessage(text));
                 widget.controller.clear();
-                _controller.sendMessage(text);
               },
+              onCommandsTap: _controller.canSend ? _showCommandsSheet : null,
+              onAttachTap:
+                  _controller.canSend && _controller.supportsAttachments
+                  ? _pickAndUploadAttachment
+                  : null,
+              onStopTap:
+                  _controller.isSending.value && !_controller.isStopping.value
+                  ? _stopActiveSession
+                  : null,
             ),
           ),
         ],

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:get/get.dart';
 import 'package:lanplayer_player/lanplayer_player.dart' as kit;
 
+import '../../../applog/app_log.dart';
 import '../../media_detail/models/media_detail_model.dart';
 import '../../mediaserver/models/mediaserver_model.dart';
 import '../../../utils/toast_util.dart';
@@ -529,8 +531,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
           .getItemDetails(seriesId)
           .timeout(const Duration(seconds: 12));
       if (!mounted) return;
-      // ignore: avoid_print
-      print('[DetailPlay] 打开选集: 条目=$seriesId 类型=${seriesItem.type} '
+      Get.find<AppLog>().debug('[DetailPlay] 打开选集: 条目=$seriesId 类型=${seriesItem.type} '
           '服务器=${server.url} 详情季=${widget.detail.season}');
       await showEpisodePickerSheet(
         context: context,
@@ -540,8 +541,7 @@ class _DetailPlaySectionState extends State<DetailPlaySection> {
         currentSeason: widget.detail.season,
       );
     } catch (e) {
-      // ignore: avoid_print
-      print('[DetailPlay] 选集打开失败: $e');
+      Get.find<AppLog>().error('[DetailPlay] 选集打开失败: $e');
       if (mounted) ToastUtil.error('选集打开失败: $e');
     }
   }
@@ -617,11 +617,7 @@ class _CircleButton extends StatelessWidget {
       color: Colors.white.withOpacity(0.14),
       shape: const CircleBorder(),
       child: InkWell(
-        onTap: () {
-          // ignore: avoid_print
-          print('[DetailPlay] circle tapped: $icon');
-          onPressed?.call();
-        },
+        onTap: onPressed,
         customBorder: const CircleBorder(),
         child: SizedBox(
           width: 48,

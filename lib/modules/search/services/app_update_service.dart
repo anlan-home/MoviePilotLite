@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:get/get.dart';
 import 'package:moviepilot_mobile/applog/app_log.dart';
 import 'package:moviepilot_mobile/modules/search/models/app_update_info.dart';
+import 'package:moviepilot_mobile/modules/search/models/update_mirror.dart';
 import 'package:moviepilot_mobile/modules/settings/models/system_env_model.dart';
 import 'package:moviepilot_mobile/services/api_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -17,7 +18,6 @@ class AppUpdateService extends GetxService {
   static const String releasesUrl =
       'https://github.com/singleton-altman/MoviePilotLite/releases';
   static const Duration cachedApkTtl = Duration(days: 7);
-  static const String downloadProxyUrl = 'https://ghproxy.net/';
   static final RegExp _androidReleaseTagPattern = RegExp(
     r'^release-v\d+(?:\.\d+){1,3}-\d{4}-\d{2}-\d{2}$',
     caseSensitive: false,
@@ -95,15 +95,55 @@ class AppUpdateService extends GetxService {
     );
   }
 
+  /// 按 [mirror] 指定的线路下载 APK。
+  ///
+  /// 加速源失败（网络错误或返回非安装包内容）时，若 [fallbackToDirect] 为真则
+  /// 自动改用直连重试一次，避免用户手动切换线路。
   Future<String> downloadApk(
     AppUpdateInfo info, {
-    bool useProxy = false,
+    UpdateMirror mirror = const UpdateMirror.direct(),
+    bool fallbackToDirect = true,
     required void Function(int received, int total) onProgress,
     CancelToken? cancelToken,
   }) async {
     if (!info.hasApk) {
       throw AppUpdateException('未找到 APK 安装包');
     }
+    final attempts = <UpdateMirror>[
+      mirror,
+      if (fallbackToDirect && !mirror.isDirect) const UpdateMirror.direct(),
+    ];
+    Object? lastError;
+    for (var index = 0; index < attempts.length; index++) {
+      final current = attempts[index];
+      try {
+        return await _downloadOnce(
+          info,
+          current,
+          onProgress: onProgress,
+          cancelToken: cancelToken,
+        );
+      } catch (e) {
+        if (e is DioException && CancelToken.isCancel(e)) rethrow;
+        lastError = e;
+        if (index < attempts.length - 1) {
+          _log.warning('经 ${current.label} 下载失败，改用直连重试: $e');
+          onProgress(0, 0);
+        }
+      }
+    }
+    if (lastError is AppUpdateException) throw lastError;
+    throw AppUpdateException(
+      lastError == null ? 'APK 下载失败' : 'APK 下载失败：$lastError',
+    );
+  }
+
+  Future<String> _downloadOnce(
+    AppUpdateInfo info,
+    UpdateMirror mirror, {
+    required void Function(int received, int total) onProgress,
+    CancelToken? cancelToken,
+  }) async {
     final updateDir = await _updateCacheDirectory(create: true);
     final fileName = _safeFileName(
       info.apkAssetName.isEmpty
@@ -116,9 +156,7 @@ class AppUpdateService extends GetxService {
     }
     try {
       await _dio.download(
-        useProxy
-            ? '$downloadProxyUrl${info.apkDownloadUrl}'
-            : info.apkDownloadUrl,
+        mirror.resolve(info.apkDownloadUrl),
         file.path,
         onReceiveProgress: onProgress,
         cancelToken: cancelToken,
@@ -131,17 +169,39 @@ class AppUpdateService extends GetxService {
           headers: const {'accept': 'application/octet-stream'},
         ),
       );
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+      if (!exists || size <= 0) {
+        throw AppUpdateException('APK 下载失败');
+      }
+      if (!await _looksLikeApk(file)) {
+        throw AppUpdateException('${mirror.label} 返回的不是安装包，请更换加速源');
+      }
     } catch (_) {
       await _deleteFileIfExists(file);
       rethrow;
     }
-    final exists = await file.exists();
-    final size = exists ? await file.length() : 0;
-    if (!exists || size <= 0) {
-      throw AppUpdateException('APK 下载失败');
-    }
-    _log.info('APK 下载完成: ${file.path}');
+    _log.info('APK 下载完成（${mirror.label}）: ${file.path}');
     return file.path;
+  }
+
+  /// APK 是 ZIP 容器，头部必须是 `PK\x03\x04`。加速源异常时常常返回 HTML 错误页。
+  Future<bool> _looksLikeApk(File file) async {
+    try {
+      final raf = await file.open();
+      try {
+        final header = await raf.read(4);
+        return header.length >= 4 &&
+            header[0] == 0x50 &&
+            header[1] == 0x4B &&
+            header[2] == 0x03 &&
+            header[3] == 0x04;
+      } finally {
+        await raf.close();
+      }
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> cleanupExpiredApkCache({Duration maxAge = cachedApkTtl}) async {

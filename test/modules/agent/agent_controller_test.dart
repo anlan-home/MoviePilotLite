@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get/get.dart';
@@ -42,6 +43,199 @@ void main() {
     if (hiveDir.existsSync()) {
       hiveDir.deleteSync(recursive: true);
     }
+  });
+
+  test(
+    'ready upload is submitted as an attachment without placeholder text',
+    () async {
+      final repository = _ActionsRepository();
+      final controller = AgentController(
+        repository: repository,
+        localCache: testCache,
+      );
+      await controller.uploadAttachment('/local/doc.pdf', 'doc.pdf');
+      expect(controller.pendingAttachments.single.name, 'doc.pdf');
+      expect(
+        repository.uploadSessionId,
+        controller.activeClientSessionId.value,
+      );
+      await controller.sendMessage('');
+      expect(repository.sentText, '');
+      expect(repository.sentAttachments.single.localPath, '/server/doc.pdf');
+      expect(controller.messages.first.content, '');
+      expect(controller.messages.first.attachments.single.name, 'doc.pdf');
+      expect(controller.pendingAttachments, isEmpty);
+      repository.events.add(
+        const AgentStreamEvent(
+          type: 'attachment',
+          raw: {
+            'attachment': {
+              'url': 'message/agent/file/result',
+              'name': 'result.pdf',
+            },
+          },
+        ),
+      );
+      repository.events.add(const AgentStreamEvent(type: 'done'));
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.messages.last.attachments.single.name, 'result.pdf');
+      expect(controller.isSending.value, isFalse);
+      controller.onClose();
+      await repository.events.close();
+    },
+  );
+
+  test('late upload is discarded when starting a new conversation', () async {
+    final repository = _ActionsRepository()
+      ..uploadGate = Completer<Map<String, dynamic>?>();
+    final controller = AgentController(
+      repository: repository,
+      localCache: testCache,
+    );
+    final upload = controller.uploadAttachment('/local/doc.pdf', 'doc.pdf');
+    expect(controller.isUploading.value, isTrue);
+    await controller.startNewSession();
+    repository.uploadGate!.complete(repository.receipt);
+    expect(await upload, isNull);
+    expect(controller.pendingAttachments, isEmpty);
+    expect(controller.isUploading.value, isFalse);
+    controller.onClose();
+    await repository.events.close();
+  });
+
+  test(
+    'failed stop still cancels local SSE and ignores subsequent events',
+    () async {
+      final repository = _ActionsRepository()
+        ..stopError = StateError('offline');
+      final controller = AgentController(
+        repository: repository,
+        localCache: testCache,
+      );
+      await controller.sendMessage('hello');
+      repository.events.add(
+        const AgentStreamEvent(type: 'start', sessionId: 'web-agent:stop'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(await controller.stopActiveSession(), isFalse);
+      expect(repository.stoppedSessionId, 'web-agent:stop');
+      expect(controller.isSending.value, isFalse);
+      expect(controller.messages.last.status, AgentMessageStatus.done);
+      repository.events.add(
+        const AgentStreamEvent(type: 'delta', content: 'late'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.messages.last.content, isEmpty);
+      controller.onClose();
+      await repository.events.close();
+    },
+  );
+
+  test(
+    'stop before stream handshake uses client id and cancels late stream',
+    () async {
+      final repository = _ActionsRepository()
+        ..sendGate = Completer<Stream<AgentStreamEvent>>();
+      final controller = AgentController(
+        repository: repository,
+        localCache: testCache,
+      );
+      final send = controller.sendMessage('first');
+      await controller.sendMessage('duplicate');
+      expect(repository.sendCalls, 1);
+      expect(await controller.stopActiveSession(), isTrue);
+      expect(repository.stoppedSessionId, startsWith('mobile-'));
+      repository.sendGate!.complete(repository.events.stream);
+      await send;
+      expect(repository.events.hasListener, isFalse);
+      expect(controller.messages.length, 2);
+      expect(controller.isSending.value, isFalse);
+      controller.onClose();
+      await repository.events.close();
+    },
+  );
+
+  test('new session resets active sending and permits the next send', () async {
+    final repository = _ActionsRepository();
+    final controller = AgentController(
+      repository: repository,
+      localCache: testCache,
+    );
+    await controller.sendMessage('first');
+    await controller.startNewSession();
+    expect(controller.isSending.value, isFalse);
+    expect(controller.messages, isEmpty);
+    await repository.events.close();
+    repository.events = StreamController<AgentStreamEvent>.broadcast();
+    await controller.sendMessage('second');
+    expect(repository.sendCalls, 2);
+    expect(controller.messages.first.content, 'second');
+    controller.onClose();
+    await repository.events.close();
+  });
+
+  for (final fails in [false, true]) {
+    test('new conversation ignores stale history (failure: $fails)', () async {
+      final repository = _ActionsRepository()
+        ..historyGate = Completer<List<AgentChatMessage>>();
+      final controller = AgentController(
+        repository: repository,
+        localCache: testCache,
+      );
+      final loading = controller.loadSession(
+        const AgentSession(
+          sessionId: 'old',
+          clientSessionId: 'old-client',
+          title: 'Old',
+          messageCount: 1,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(controller.isLoadingMessages.value, isTrue);
+      await controller.startNewSession();
+      expect(controller.isLoadingMessages.value, isFalse);
+      expect(controller.canSend, isTrue);
+      await controller.sendMessage('new conversation');
+      if (fails) {
+        repository.historyGate!.completeError(StateError('old history failed'));
+      } else {
+        repository.historyGate!.complete([
+          AgentChatMessage(
+            id: 'stale',
+            role: 'assistant',
+            content: 'old conversation',
+            createdAt: DateTime(2026),
+            status: AgentMessageStatus.done,
+          ),
+        ]);
+      }
+      await loading;
+      expect(controller.messages.first.content, 'new conversation');
+      expect(controller.messageError.value, isNull);
+      expect(controller.isLoadingMessages.value, isFalse);
+      controller.onClose();
+      await repository.events.close();
+    });
+  }
+
+  test('handshake timeout settles state and cancels a late stream', () async {
+    final repository = _ActionsRepository()
+      ..sendGate = Completer<Stream<AgentStreamEvent>>();
+    final controller = AgentController(
+      repository: repository,
+      localCache: testCache,
+      streamIdleTimeout: const Duration(milliseconds: 20),
+    );
+    final sending = controller.sendMessage('hello');
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(controller.isSending.value, isFalse);
+    expect(controller.messages.last.status, AgentMessageStatus.failed);
+    expect(controller.messageError.value, '响应超时，请重试');
+    repository.sendGate!.complete(repository.events.stream);
+    await sending;
+    expect(repository.events.hasListener, isFalse);
+    controller.onClose();
+    await repository.events.close();
   });
 
   test('onInit hydrates messages from local cache', () async {
@@ -297,6 +491,86 @@ void main() {
       expect(controller.isSending.value, isFalse);
     },
   );
+}
+
+class _ActionsRepository extends _FakeAgentRepository
+    implements AgentRepositoryActions {
+  StreamController<AgentStreamEvent> events =
+      StreamController<AgentStreamEvent>.broadcast();
+  Completer<Stream<AgentStreamEvent>>? sendGate;
+  Completer<Map<String, dynamic>?>? uploadGate;
+  Completer<List<AgentChatMessage>>? historyGate;
+  Object? stopError;
+  String? stoppedSessionId;
+  String? uploadSessionId;
+  String? sentText;
+  List<AgentAttachment> sentAttachments = [];
+  int sendCalls = 0;
+  final receipt = <String, dynamic>{
+    'ref': 'message/agent/file/doc',
+    'url': 'message/agent/file/doc',
+    'name': 'doc.pdf',
+    'mime_type': 'application/pdf',
+    'local_path': '/server/doc.pdf',
+    'status': 'ready',
+    'size': 3,
+  };
+
+  @override
+  Future<Stream<AgentStreamEvent>> sendMessage({
+    required String text,
+    required String sessionId,
+    String? clientSessionId,
+  }) async {
+    sendCalls++;
+    sentText = text;
+    return sendGate?.future ?? Future.value(events.stream);
+  }
+
+  @override
+  Future<Stream<AgentStreamEvent>> sendMessageWithAttachments({
+    required String text,
+    required String sessionId,
+    String? clientSessionId,
+    required List<AgentAttachment> attachments,
+  }) async {
+    sentAttachments = attachments;
+    return sendMessage(
+      text: text,
+      sessionId: sessionId,
+      clientSessionId: clientSessionId,
+    );
+  }
+
+  @override
+  Future<List<AgentChatMessage>> fetchSessionMessages(String sessionId) async =>
+      historyGate?.future ?? Future.value(const <AgentChatMessage>[]);
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchCommands() async => [
+    {'command': '/search'},
+  ];
+
+  @override
+  Future<Map<String, dynamic>?> uploadAttachment(
+    String filePath,
+    String fileName, {
+    String? sessionId,
+  }) async {
+    uploadSessionId = sessionId;
+    return uploadGate?.future ?? Future.value(receipt);
+  }
+
+  @override
+  Future<bool> stopSession(String sessionId) async {
+    stoppedSessionId = sessionId;
+    if (stopError != null) throw stopError!;
+    return true;
+  }
+
+  @override
+  Future<Uint8List> downloadAttachment(AgentAttachment attachment) async =>
+      Uint8List.fromList([1]);
 }
 
 class _FakeAgentRepository implements AgentRepositoryContract {

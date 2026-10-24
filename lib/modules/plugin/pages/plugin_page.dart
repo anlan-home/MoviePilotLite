@@ -6,6 +6,8 @@ import 'package:moviepilot_mobile/modules/plugin/controllers/plugin_controller.d
 import 'package:moviepilot_mobile/modules/plugin/models/plugin_models.dart';
 import 'package:moviepilot_mobile/modules/plugin/pages/plugin_backup_restore_sheet.dart';
 import 'package:moviepilot_mobile/modules/plugin/pages/plugin_info_sheet.dart';
+import 'package:moviepilot_mobile/modules/plugin/pages/plugin_manage_sheet.dart';
+import 'package:moviepilot_mobile/modules/plugin/pages/plugin_market_sheet.dart';
 import 'package:moviepilot_mobile/services/app_service.dart';
 import 'package:moviepilot_mobile/modules/plugin/widgets/plugin_item_card.dart';
 import 'package:moviepilot_mobile/utils/image_util.dart';
@@ -48,6 +50,13 @@ class PluginPage extends GetView<PluginController> {
         title: const Text('已安装插件'),
         centerTitle: false,
         actions: [
+          _buildAppBarActionButton(
+            context,
+            icon: Icons.folder_copy_outlined,
+            tooltip: '分组与组件',
+            accent: palette.primary,
+            onPressed: () => showPluginMarketSheet(context),
+          ),
           _buildAppBarActionButton(
             context,
             icon: Icons.add_rounded,
@@ -398,6 +407,9 @@ class PluginPage extends GetView<PluginController> {
               break;
             case PluginHandleType.uninstall:
               _uninstallPlugin(item);
+              break;
+            case PluginHandleType.manage:
+              showPluginManageSheet(context, item);
               break;
           }
         },

@@ -14,6 +14,7 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../player/core/player_engine.dart';
 import '../../player/core/prepare_phase.dart';
+import '../../player/core/player_screen_awake.dart';
 import '../../player/subtitle/libass_style.dart';
 import '../../player/subtitle/ass_style_normalizer.dart';
 import '../../player/core/player_manager.dart';
@@ -88,6 +89,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   PlayerEngine? _engine;
   PlayerEngineType _engineType = PlayerEngineType.nativeSurface;
   StreamSubscription<PlayerState>? _stateSub;
+  StreamSubscription<PlayerEngineType>? _engineChangeSub;
+  late final PlayerScreenAwake _screenAwake;
+  int _backgroundRevision = 0;
   int _engineKey = 0; // 引擎切换时增加，强制视频 widget 重建
 
   bool _controlsVisible = true;
@@ -214,6 +218,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _prepareTimeoutTimer ??= Timer(const Duration(seconds: 20), () {
       if (!mounted || _isDisposed || _preparePhase == null) return;
       AppLog.w('Player', '准备阶段超时（20s）');
+      _screenAwake.bind(null, isAudio: _isAudio);
+      _engine?.pause();
       setState(() {
         _prepareVisible = false;
         _preparePhase = null;
@@ -256,6 +262,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   int _currentEpisodeIndex = 0;
   MediaItem? _currentMedia;
   MediaItem get _activeMedia => _currentMedia ?? widget.media;
+  bool get _isAudio => _activeMedia.type == MediaType.audio;
+  bool _audioOpening = false;
 
   /// 是否有可用的选集列表（上一集/下一集按钮据此显示）
   bool get _hasEpisodeList {
@@ -336,6 +344,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void initState() {
     super.initState();
     // 生命周期：退后台暂停引擎（与 TV 端同一规则,见 didChangeAppLifecycleState）
+    _screenAwake = PlayerScreenAwake(
+      initialLifecycleState: WidgetsBinding.instance.lifecycleState,
+    );
     WidgetsBinding.instance.addObserver(this);
     _currentQuality = ref.read(playerSettingsProvider).defaultQuality;
     _transcodeFallbackUrl = widget.transcodeUrl;
@@ -413,11 +424,13 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _loadChapters();
     // 控制栏初始可见，启动自动隐藏定时器
     _startHideTimer();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky, overlays: []);
-    SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
+    if (!_isAudio) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky, overlays: []);
+      SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+    }
     // 提前获取屏幕尺寸，确保弹幕更新时 _screenWidth != 0
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -442,9 +455,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+    _screenAwake.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.hidden ||
         state == AppLifecycleState.detached) {
+      _backgroundRevision++;
       _engine?.pause();
     }
   }
@@ -464,6 +479,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   void _cleanup() {
     if (_cleanupDone) return;
     _cleanupDone = true;
+    _screenAwake.dispose();
+    _engineChangeSub?.cancel();
+    _engineChangeSub = null;
 
     _stopLibass(); // 释放 libass 原生渲染资源(定时器/图像/原生桥)
     _progressTimer?.cancel();
@@ -518,7 +536,21 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   // 防重入:快速重试/连点播放时并发 _initPlayer 会在 PlayerManager 里互踩
   bool _initPlayerRunning = false;
 
+  bool get _isAppBackground {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.detached;
+  }
+
+  void _bindScreenAwake() {
+    if (_cleanupDone || _isDisposed) return;
+    if (_isAppBackground || _initError != null) _engine?.pause();
+    _screenAwake.bind(_initError == null ? _engine : null, isAudio: _isAudio);
+  }
+
   Future<void> _initPlayer() async {
+    if (_cleanupDone || _isDisposed) return;
     if (_initPlayerRunning) {
       AppLog.w('Player', '播放初始化进行中,忽略重复触发');
       return;
@@ -542,7 +574,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           quality: ps.defaultQuality,
           burnInSubtitle: ps.burnInSubtitle,
         );
-        if (!mounted || _isDisposed) return; // 解析期间用户可能已退出
+        if (!mounted || _isDisposed || _cleanupDone) return; // 解析期间用户可能已退出
         // 直连失败时的转码兜底流：原先在详情页解析后传入，现在这里取
         _transcodeFallbackUrl ??= svc.lastTranscodeUrl;
         AppLog.i('Player',
@@ -550,11 +582,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         _enterPreparePhase(PreparePhase.startingEngine);
       }
 
-      _engine = await manager.createEngine(
+      final backgroundRevision = _backgroundRevision;
+      final engine = await manager.createEngine(
         url: url,
         httpHeaders: widget.httpHeaders,
-        autoPlay: true,
+        autoPlay: !_isAppBackground,
       );
+      if (!mounted || _isDisposed || _cleanupDone) {
+        await engine.dispose();
+        return;
+      }
+      _engine = engine;
+      if (backgroundRevision != _backgroundRevision) await engine.pause();
+      if (!mounted || _isDisposed || _cleanupDone) return;
+      _bindScreenAwake();
       _engineType = _engine!.engineType;
       _engineKey++;
       _currentStreamUrl = url;
@@ -562,10 +603,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       // 恢复用户音量/亮度：持久化值优先，未设置过则读取系统当前值作为起点，
       // 保证 HUD 与系统实际状态对应（而不是从 100% 起跳）
       await _restoreVolumeBrightness();
+      if (!mounted || _isDisposed || _cleanupDone) return;
 
       // 监听引擎状态
       _stateSub = _engine!.stateStream.listen((state) {
-        if (mounted && !_isDisposed) {
+        if (mounted && !_isDisposed && !_cleanupDone) {
           if (_streamTick++ % 20 == 0) AppLog.i("Player", "stateStream: playing=${state.isPlaying} pos=${state.position.inMilliseconds} dur=${state.duration.inMilliseconds}");
           // 内核已拿到流（有时长）或已开播 → 准备态结束（此后由 _isBuffering 接管）
           if (_preparePhase != null &&
@@ -590,7 +632,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 try {
                   final svc = ref.read(currentMediaServerServiceProvider);
                   if (svc is EmbyService) {
-                    svc.refreshPlaySession();
+                    if (!_isAudio) svc.refreshPlaySession();
                     svc.reportPlaybackStart(_activeMedia.id);
                   }
                 } catch (_) {}
@@ -645,7 +687,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _checkSkipState(state.position);
 
           // ── 下一集倒计时检测 ──
-          _checkNextEpisode(state.position, state.duration);
+          if (_isAudio) {
+            _checkAudioCompletion(state);
+          } else {
+            _checkNextEpisode(state.position, state.duration);
+          }
 
           if (state.duration > Duration.zero && !_tracksLoaded) {
             _tracksLoaded = true;
@@ -696,8 +742,9 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _engine!.applySubtitleStyle(ref.read(playerSettingsProvider));
 
       // 监听引擎切换
-      manager.engineChangeStream.listen((type) {
-        if (!mounted) return;
+      _engineChangeSub?.cancel();
+      _engineChangeSub = manager.engineChangeStream.listen((type) {
+        if (!mounted || _isDisposed || _cleanupDone) return;
         // manager 自己也会换内核（回退/HDR 判定）：宿主手里的引用必须跟着换，
         // 否则样式/选轨/音量这些控制全打在已停用的旧内核上（真机实证：
         // 「切换内核: Exo → 原生」之后那次样式下发石沉大海）。
@@ -706,13 +753,17 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _engineType = type;
           if (current != null) _engine = current;
         });
+        _bindScreenAwake();
         _engine?.applySubtitleStyle(ref.read(playerSettingsProvider));
       });
 
       setState(() {});
     } catch (e) {
       AppLog.e('Player', '播放失败: $e');
-      if (mounted) setState(() => _initError = e.toString());
+      _screenAwake.bind(null, isAudio: _isAudio);
+      if (mounted && !_isDisposed && !_cleanupDone) {
+        setState(() => _initError = e.toString());
+      }
     } finally {
       _initPlayerRunning = false;
     }
@@ -1146,7 +1197,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         url = await svc.getTranscodeUrl(_activeMedia.id);
       }
     }
-    if (url == null || _engine == null || _isDisposed) {
+    if (url == null || _engine == null || _isDisposed || _cleanupDone) {
       AppLog.w('Player', '拿不到转码地址，保持直连并提示用户');
       _showDecodeFailedHint();
       return;
@@ -1157,7 +1208,14 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           content: Text('直连播放失败，已切换为服务器转码流'),
           duration: Duration(seconds: 4)));
     }
-    await _engine!.open(url: url, httpHeaders: widget.httpHeaders, autoPlay: true);
+    final backgroundRevision = _backgroundRevision;
+    _screenAwake.bind(null, isAudio: _isAudio);
+    await _engine!.open(
+      url: url, httpHeaders: widget.httpHeaders, autoPlay: !_isAppBackground,
+    );
+    if (backgroundRevision != _backgroundRevision) await _engine?.pause();
+    if (!mounted || _isDisposed || _cleanupDone) return;
+    _bindScreenAwake();
     if (pos > Duration.zero) await _engine?.seek(pos);
     if (speed != 1.0) await _engine?.setSpeed(speed);
   }
@@ -1384,6 +1442,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   /// 加载弹幕：已记住选择直载 → 全源双路并行匹配 → 依序尝试候选。
   Future<void> _loadDanmaku() async {
+    if (_isAudio) return;
     if (_danmakuLoading) {
       AppLog.d('Danmaku', '弹幕加载中，跳过重复请求');
       return;
@@ -1801,6 +1860,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   }
 
   void _startHideTimer() {
+    if (_isAudio) return;
     _hideTimer?.cancel();
     _hideTimer = Timer(AppMotion.controlsDwell, () {
       if (mounted) {
@@ -1881,14 +1941,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       final url = await svc.getStreamUrl(_activeMedia.id, quality: q, burnInSubtitle: ps.burnInSubtitle);
       _transcodeFallbackUrl = svc.lastTranscodeUrl;
       _transcodeTried = false; // 换了新流,给新流一次直连机会
-      if (!mounted) return;
+      if (!mounted || _isDisposed || _cleanupDone) return;
+      final backgroundRevision = _backgroundRevision;
       _currentStreamUrl = url; // 记录新画质流地址（MediaSourceId 可能随转码源变化）
       final pos = _position;
       final wasPlaying = _isPlaying;
+      _screenAwake.bind(null, isAudio: _isAudio);
       await _engine?.stop();
       await _engine?.open(url: url, httpHeaders: svc.streamHeaders, autoPlay: false);
       if (pos > Duration.zero) await _engine?.seek(pos);
-      if (wasPlaying) await _engine?.play();
+      if (wasPlaying && !_isAppBackground &&
+          backgroundRevision == _backgroundRevision && !_cleanupDone) {
+        await _engine?.play();
+      }
+      _bindScreenAwake();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('已切换画质：${_qualityLabel(q)}'), duration: const Duration(seconds: 2)),
@@ -2550,7 +2616,8 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   Future<void> _switchEngine(PlayerEngineType type) async {
     if (type == _engineType) return;
-    if (_engine == null) return;
+    if (_engine == null || _cleanupDone || _isDisposed) return;
+    _screenAwake.bind(null, isAudio: _isAudio);
     _stopLibass(); // libass 层绑定当前引擎,切内核必须重建(新内核是 MPV 则自带特效渲染)
     final manager = ref.read(playerManagerProvider);
     try {
@@ -2573,7 +2640,16 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       // 解绑旧引擎的 fitMode 监听
       oldEngine.fitModeNotifier.removeListener(_onFitModeChanged);
 
-      _engine = await manager.switchEngine(type);
+      final backgroundRevision = _backgroundRevision;
+      final engine = await manager.switchEngine(type);
+      if (!mounted || _isDisposed || _cleanupDone) {
+        await engine.dispose();
+        return;
+      }
+      _engine = engine;
+      if (backgroundRevision != _backgroundRevision) await engine.pause();
+      if (!mounted || _isDisposed || _cleanupDone) return;
+      _bindScreenAwake();
       _engineType = type;
       _engineKey++; // 强制视频 widget 重建，避免旧 engine 残留引发 disposed 错误
 
@@ -2590,7 +2666,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _engine?.fitModeNotifier.addListener(_onFitModeChanged);
 
       _stateSub = _engine!.stateStream.listen((state) {
-        if (mounted && !_isDisposed) {
+        if (mounted && !_isDisposed && !_cleanupDone) {
           // 先同步弹幕时钟与位置 —— 独立于 setState，任何后续异常都不影响弹幕时间轴
           try {
             _danmakuController.updateConfig(
@@ -2609,7 +2685,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                 try {
                   final svc = ref.read(currentMediaServerServiceProvider);
                   if (svc is EmbyService) {
-                    svc.refreshPlaySession();
+                    if (!_isAudio) svc.refreshPlaySession();
                     svc.reportPlaybackStart(_activeMedia.id);
                   }
                 } catch (_) {}
@@ -2664,7 +2740,11 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
           _checkSkipState(state.position);
 
           // ── 下一集倒计时检测 ──
-          _checkNextEpisode(state.position, state.duration);
+          if (_isAudio) {
+            _checkAudioCompletion(state);
+          } else {
+            _checkNextEpisode(state.position, state.duration);
+          }
 
           if (state.duration > Duration.zero && !_tracksLoaded) {
             _tracksLoaded = true;
@@ -2713,6 +2793,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       });
     } catch (e) {
       AppLog.e('Player', '切换内核失败: $e');
+      _screenAwake.bind(null, isAudio: _isAudio);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('切换内核失败: $e'), backgroundColor: Colors.red),
@@ -2897,17 +2978,33 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       return;
     }
 
+    final audio = _isAudio;
+    if (audio && _audioOpening) return;
+    if (audio) _audioOpening = true;
     try {
+      if (audio) {
+        await svc.reportPlaybackStopped(_activeMedia.id,
+            positionMs: _position.inMilliseconds);
+        final detail = await svc.getItemDetails(episode.id);
+        if (detail.id != episode.id || detail.type != MediaType.audio ||
+            (detail.videoTracks?.isNotEmpty ?? false)) {
+          throw StateError('播放队列包含非音频条目');
+        }
+        episode = detail;
+        _resumeApplied = true; // Never apply the initial track's resume to another.
+      }
       final ps = ref.read(playerSettingsProvider);
       final url = await svc.getStreamUrl(episode.id, quality: ps.defaultQuality, burnInSubtitle: ps.burnInSubtitle);
       _transcodeFallbackUrl = svc.lastTranscodeUrl;
       _transcodeTried = false; // 换了新流,给新流一次直连机会
-      if (!mounted) return;
+      if (!mounted || _isDisposed || _cleanupDone) return;
+      final backgroundRevision = _backgroundRevision;
       _currentStreamUrl = url; // 记录新一集的流地址（字幕下载据此取 MediaSourceId）
 
       final headers = svc.streamHeaders;
 
       // 停止当前播放
+      _screenAwake.bind(null, isAudio: _isAudio);
       await _engine?.stop();
 
       _tracksLoaded = false;
@@ -2915,8 +3012,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _playbackStartReported = false;
       _lastReportedMs = 0;
 
+      // Audio may start reporting synchronously during open; use its new ID.
+      if (audio) _currentMedia = episode;
       // 重新打开新集数
-      await _engine?.open(url: url, httpHeaders: headers, autoPlay: true);
+      await _engine?.open(
+        url: url, httpHeaders: headers, autoPlay: !_isAppBackground,
+      );
+      if (backgroundRevision != _backgroundRevision) await _engine?.pause();
+      if (!mounted || _isDisposed || _cleanupDone) return;
+      _bindScreenAwake();
 
       // 新引擎音量默认重置为 1.0，重新应用用户音量（含持久化值）
       _engine?.setVolume(_volume);
@@ -2972,10 +3076,122 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
       _nextEpisodePlaying = false; // 失败后允许再次触发自动连播
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('切换集数失败: ${e.toString()}')),
+          SnackBar(content: Text('${audio ? '切换曲目' : '切换集数'}失败: ${e.toString()}')),
         );
       }
+      if (audio) _nextEpisodeCancelled = true;
+    } finally {
+      _audioOpening = false;
     }
+  }
+
+  void _checkAudioCompletion(PlayerState state) {
+    if (_audioOpening || _nextEpisodePlaying || _nextEpisodeCancelled ||
+        state.error != null || !state.isCompleted) return;
+    final queue = widget.episodes;
+    if (queue == null || _currentEpisodeIndex < 0 ||
+        _currentEpisodeIndex >= queue.length - 1) return;
+    if (queue[_currentEpisodeIndex + 1].type != MediaType.audio) return;
+    _playNextEpisode();
+  }
+
+  Widget _buildAudioPlayer() {
+    final queue = widget.episodes ?? const <MediaItem>[];
+    final durationMs = _duration.inMilliseconds;
+    return Scaffold(
+      backgroundColor: const Color(0xff15151b),
+      appBar: AppBar(
+        title: Text(_activeMedia.album ?? '音频播放'),
+        backgroundColor: const Color(0xff15151b),
+        foregroundColor: Colors.white,
+      ),
+      body: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Native MPV requires a mounted PlatformView to create its channel,
+          // even for audio. Cover it rather than dropping the rendering widget.
+          if (_engine != null)
+            KeyedSubtree(
+              key: ValueKey('video_$_engineKey'),
+              child: _engine!.buildVideoWidget(),
+            ),
+          ColoredBox(
+            color: const Color(0xff15151b),
+            child: SafeArea(
+              child: ListView(
+                padding: const EdgeInsets.all(24),
+                children: [
+                  Center(
+                    child: SizedBox(
+                      width: 220, height: 220,
+                      child: _activeMedia.posterUrl.isEmpty
+                          ? const Icon(Icons.album_rounded, size: 160, color: Colors.white54)
+                          : Image.network(
+                              _activeMedia.posterUrl,
+                              headers: widget.service?.imageHeaders,
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                Icons.album_rounded, size: 160, color: Colors.white54),
+                            ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(_activeMedia.title, textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 8),
+                  Text(_activeMedia.artists.join(' / '), textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.white60)),
+                  Slider(
+                    value: _position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 1).toDouble(),
+                    max: durationMs > 0 ? durationMs.toDouble() : 1,
+                    onChanged: durationMs <= 0 ? null : (value) {
+                      _engine?.seek(Duration(milliseconds: value.round()));
+                    },
+                  ),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                    Text(_formatTime(_position), style: const TextStyle(color: Colors.white60)),
+                    Text(_formatTime(_duration), style: const TextStyle(color: Colors.white60)),
+                  ]),
+                  Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    IconButton(
+                      tooltip: '上一首', color: Colors.white,
+                      onPressed: _audioOpening || _currentEpisodeIndex <= 0 || queue.isEmpty
+                          ? null : () => _playEpisode(queue[_currentEpisodeIndex - 1]),
+                      icon: const Icon(Icons.skip_previous_rounded, size: 36),
+                    ),
+                    IconButton(
+                      tooltip: _isPlaying ? '暂停' : '播放', color: Colors.white,
+                      onPressed: _engine == null || _audioOpening ? null : _togglePlay,
+                      icon: Icon(_isPlaying ? Icons.pause_circle_filled : Icons.play_circle_fill, size: 60),
+                    ),
+                    IconButton(
+                      tooltip: '下一首', color: Colors.white,
+                      onPressed: _audioOpening || _currentEpisodeIndex >= queue.length - 1
+                          ? null : () => _playEpisode(queue[_currentEpisodeIndex + 1]),
+                      icon: const Icon(Icons.skip_next_rounded, size: 36),
+                    ),
+                  ]),
+                  if (_isBuffering || _audioOpening || _preparePhase != null)
+                    const Center(child: CircularProgressIndicator()),
+                  if (_initError != null)
+                    Text(_initError!, style: const TextStyle(color: Colors.redAccent)),
+                  for (var index = 0; index < queue.length; index++)
+                    ListTile(
+                      selected: index == _currentEpisodeIndex,
+                      textColor: Colors.white70,
+                      selectedColor: AppTheme.primary,
+                      leading: Text('${queue[index].trackNumber ?? index + 1}',
+                          style: const TextStyle(color: Colors.white54)),
+                      title: Text(queue[index].title),
+                      onTap: _audioOpening ? null : () => _playEpisode(queue[index]),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -2983,6 +3199,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _screenWidth = MediaQuery.of(context).size.width;
     _screenHeight = MediaQuery.of(context).size.height;
     _danmakuController.updateScreenSize(_screenWidth, _screenHeight);
+    if (_isAudio) return _buildAudioPlayer();
 
     return PopScope(
       canPop: false,
@@ -4289,6 +4506,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   // ════════════════════════════════════════════════
 
   Future<void> _loadIntroSkip() async {
+    if (_isAudio) return;
     final svc = widget.service;
     if (svc == null) {
       AppLog.i('Player', 'IntroSkip: service 为空，跳过加载');
@@ -4308,6 +4526,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   /// 加载 Trickplay 缩略图元数据（仅 Jellyfin 10.9+ 支持）
   Future<void> _loadTrickplayInfo() async {
+    if (_isAudio) return;
     final svc = widget.service;
     if (svc is! JellyfinService) return;
     try {
@@ -4323,6 +4542,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
   /// 加载章节标记（Emby/Jellyfin Chapters API），在进度条上绘制 tick
   Future<void> _loadChapters() async {
+    if (_isAudio) return;
     final svc = widget.service;
     if (svc == null || _chaptersLoaded) return;
     try {

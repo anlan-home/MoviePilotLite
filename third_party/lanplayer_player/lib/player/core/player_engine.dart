@@ -36,8 +36,12 @@ enum PlayerEngineType {
 
 /// 播放器状态
 class PlayerState {
+  static const Object _unchangedError = Object();
+
   final bool isPlaying;
   final bool isBuffering;
+  final bool? playWhenReady;
+  final bool isCompleted;
   final Duration position;
   final Duration duration;
   final Duration buffer;
@@ -52,6 +56,8 @@ class PlayerState {
   const PlayerState({
     this.isPlaying = false,
     this.isBuffering = false,
+    this.playWhenReady,
+    this.isCompleted = false,
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.buffer = Duration.zero,
@@ -67,12 +73,14 @@ class PlayerState {
   PlayerState copyWith({
     bool? isPlaying,
     bool? isBuffering,
+    bool? playWhenReady,
+    bool? isCompleted,
     Duration? position,
     Duration? duration,
     Duration? buffer,
     double? speed,
     double? volume,
-    String? error,
+    Object? error = _unchangedError,
     PlayerEngineType? engineType,
     bool? isHdr,
     int? videoWidth,
@@ -81,12 +89,14 @@ class PlayerState {
     return PlayerState(
       isPlaying: isPlaying ?? this.isPlaying,
       isBuffering: isBuffering ?? this.isBuffering,
+      playWhenReady: playWhenReady ?? this.playWhenReady,
+      isCompleted: isCompleted ?? this.isCompleted,
       position: position ?? this.position,
       duration: duration ?? this.duration,
       buffer: buffer ?? this.buffer,
       speed: speed ?? this.speed,
       volume: volume ?? this.volume,
-      error: error ?? this.error,
+      error: identical(error, _unchangedError) ? this.error : error as String?,
       engineType: engineType ?? this.engineType,
       isHdr: isHdr ?? this.isHdr,
       videoWidth: videoWidth ?? this.videoWidth,

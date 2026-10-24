@@ -119,6 +119,27 @@ List<SettingsCategory> get settingsCategories => [
         route: '/settings/system/danmaku',
         icon: Icons.speaker_notes_outlined,
       ),
+      SettingsSubItem(
+        id: 'notification',
+        title: '通知渠道',
+        subtitle: '微信 ClawBot 登录与连通性',
+        route: '/settings/notification-wechat',
+        icon: Icons.campaign_outlined,
+      ),
+      SettingsSubItem(
+        id: 'mcp',
+        title: 'MCP 工具',
+        subtitle: '工具列表、调用与服务器配置',
+        route: '/mcp-tools',
+        icon: Icons.build_circle_outlined,
+      ),
+      SettingsSubItem(
+        id: 'maintenance',
+        title: '系统维护',
+        subtitle: '服务端重启与升级',
+        route: '/system-maintenance',
+        icon: Icons.restart_alt_outlined,
+      ),
     ],
   ),
   SettingsCategory(

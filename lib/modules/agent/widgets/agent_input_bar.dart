@@ -7,11 +7,19 @@ class AgentInputBar extends StatelessWidget {
     required this.controller,
     required this.enabled,
     required this.onSend,
+    this.hasAttachments = false,
+    this.onCommandsTap,
+    this.onAttachTap,
+    this.onStopTap,
   });
 
   final TextEditingController controller;
   final bool enabled;
+  final bool hasAttachments;
   final VoidCallback onSend;
+  final VoidCallback? onCommandsTap;
+  final VoidCallback? onAttachTap;
+  final VoidCallback? onStopTap;
 
   @override
   Widget build(BuildContext context) {
@@ -42,7 +50,8 @@ class AgentInputBar extends StatelessWidget {
             child: ValueListenableBuilder<TextEditingValue>(
               valueListenable: controller,
               builder: (context, value, _) {
-                final canSend = enabled && value.text.trim().isNotEmpty;
+                final canSend =
+                    enabled && (value.text.trim().isNotEmpty || hasAttachments);
                 return AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
                   curve: Curves.easeOut,
@@ -71,6 +80,83 @@ class AgentInputBar extends StatelessWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
+                      if (!enabled && onStopTap != null)
+                        Padding(
+                          padding: const EdgeInsets.only(
+                            top: 5,
+                            bottom: 5,
+                            right: 6,
+                          ),
+                          child: GestureDetector(
+                            onTap: onStopTap,
+                            child: Container(
+                              width: 34,
+                              height: 34,
+                              decoration: BoxDecoration(
+                                color: colorScheme.error.withValues(
+                                  alpha: 0.12,
+                                ),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(
+                                CupertinoIcons.stop_fill,
+                                color: colorScheme.error,
+                                size: 16,
+                              ),
+                            ),
+                          ),
+                        )
+                      else if (onCommandsTap != null ||
+                          onAttachTap != null) ...[
+                        if (onCommandsTap != null)
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: 5,
+                              bottom: 5,
+                              right: 6,
+                            ),
+                            child: GestureDetector(
+                              onTap: onCommandsTap,
+                              child: Container(
+                                width: 34,
+                                height: 34,
+                                decoration: const BoxDecoration(
+                                  color: Colors.transparent,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.command,
+                                  color: colorScheme.onSurfaceVariant,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (onAttachTap != null)
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: 5,
+                              bottom: 5,
+                              right: 6,
+                            ),
+                            child: GestureDetector(
+                              onTap: onAttachTap,
+                              child: Container(
+                                width: 34,
+                                height: 34,
+                                decoration: const BoxDecoration(
+                                  color: Colors.transparent,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  CupertinoIcons.paperclip,
+                                  color: colorScheme.onSurfaceVariant,
+                                  size: 18,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
                       Padding(
                         padding: const EdgeInsets.only(top: 5, bottom: 5),
                         child: AnimatedContainer(

@@ -40,6 +40,9 @@ class NativeSurfaceEngine implements PlayerEngine {
       ValueNotifier<Size>(Size.zero);
   double _videoScale = 1.0;
   bool _pendingAutoPlay = false;
+  bool _nativeReady = false;
+  bool _disposed = false;
+  int _createRevision = 0;
   String? _pendingUrl;
   Map<String, String>? _pendingHeaders;
 
@@ -58,12 +61,14 @@ class NativeSurfaceEngine implements PlayerEngine {
 
   /// PlatformView 创建后由宿主回调绑定通道（此刻才能下发命令）。
   void attachPlatformChannel(int viewId) {
+    if (_disposed) return;
+    _nativeReady = false;
     _channel = MethodChannel('lanplayer/mpv_surface_$viewId');
     _channel!.setMethodCallHandler(_onMethodCall);
     AppLog.i('NativeSurface', 'PlatformView 就绪: viewId=$viewId');
     // attach 到来:若 open() 先行(pending),此刻补发 create
     if (_pendingUrl != null) {
-      _createWhenReady(_pendingUrl!, _pendingHeaders, _pendingAutoPlay);
+      unawaited(_createWhenReady(_pendingUrl!, _pendingHeaders));
     }
     // 同理补发样式:createEngine 返回时通道往往还没建立(日志实证
     // 「PlatformView 未就绪,create 挂起等待 attach」→「mpv create: ok=true」),
@@ -79,38 +84,51 @@ class NativeSurfaceEngine implements PlayerEngine {
   Future<dynamic> _onMethodCall(MethodCall call) async {
     switch (call.method) {
       case 'onEnded':
-        _updateState(_state.copyWith(isPlaying: false));
+        _updateState(_state.copyWith(isPlaying: false, isCompleted: true));
     }
     return null;
   }
 
   void _updateState(PlayerState s) {
+    if (_disposed) return;
     _state = s;
     if (!_stateController.isClosed) _stateController.add(s);
   }
 
   Future<void> _createWhenReady(
-      String url, Map<String, String>? headers, bool autoPlay) async {
+      String url, Map<String, String>? headers) async {
+    if (_disposed) return;
+    final revision = ++_createRevision;
+    final channel = _channel;
+    _nativeReady = false;
     // PlatformView 由 widget 树 build 驱动(AndroidView 挂载 →
     // onPlatformViewCreated → attachPlatformChannel)。open() 先于 view
     // 创建时仅保持 pending,由 attach 回调触发 create —— 严禁超时放弃:
     // 放弃后 attach 到来时 pending 已清,视频永远不播(首版实证)。
-    if (_channel == null) {
+    if (channel == null) {
       AppLog.i('NativeSurface', 'PlatformView 未就绪,create 挂起等待 attach');
       return;
     }
     try {
-      final ok = await _channel!.invokeMethod<bool>('create', {
+      final ok = await channel.invokeMethod<bool>('create', {
         'url': url,
         'headers': headers,
-        'autoPlay': autoPlay,
+        // Surface 就绪可能晚于 pause：先暂停创建，成功后只应用最新意图，
+        // 不让异步 create 携带的旧 autoPlay 在后台短暂开播。
+        'autoPlay': false,
         // 硬解路径由 Dart 侧决定（Kotlin 的 create 接受 hwdec 参数）：
         // 直连 vs copy 的差别在真机上很实在，见 decodeCompatMode 的注释
         'hwdec': decodeCompatMode ? 'mediacodec-copy' : 'mediacodec',
       });
+      if (_disposed || revision != _createRevision || channel != _channel) return;
       AppLog.i('NativeSurface', 'mpv create: ok=$ok url=${url.length > 60 ? '…' : url}');
+      if (ok != true) return;
+      _nativeReady = true;
+      await _applyPlaybackIntent();
+      if (_disposed || revision != _createRevision || channel != _channel) return;
       _startPolling();
     } catch (e) {
+      if (_disposed || revision != _createRevision || channel != _channel) return;
       AppLog.e('NativeSurface', 'mpv create 失败: $e');
       _updateState(_state.copyWith(error: e.toString()));
     }
@@ -133,6 +151,10 @@ class NativeSurfaceEngine implements PlayerEngine {
             await channel.invokeMethod<Map<dynamic, dynamic>>('getPlaybackState');
         if (raw == null) return;
         final snap = NativeSurfaceSnapshot.fromRaw(raw);
+        // The existing native bridge exposes arbitrary read-only mpv properties.
+        // EOF is needed for audio: last time-pos can stop short of duration.
+        final eof = await channel.invokeMethod<String>('getProperty', 'eof-reached');
+        if (_disposed || channel != _channel) return;
         if (snap.videoSize != _videoSizeNotifier.value) {
           _videoSizeNotifier.value = snap.videoSize;
           // 画布尺寸（逻辑 px）与 Kotlin 侧 surfaceChanged 打印的 Surface 尺寸
@@ -151,7 +173,8 @@ class NativeSurfaceEngine implements PlayerEngine {
         _updateState(_state.copyWith(
           position: snap.position,
           duration: snap.duration,
-          isPlaying: snap.isPlaying ?? _state.isPlaying,
+          isPlaying: eof == 'yes' ? false : snap.isPlaying ?? _state.isPlaying,
+          isCompleted: eof == 'yes',
           videoWidth: snap.videoSize.width.round(),
           videoHeight: snap.videoSize.height.round(),
           // 音量/倍速必须回读：宿主每个状态帧都执行 `_volume/_speed =
@@ -201,18 +224,38 @@ class NativeSurfaceEngine implements PlayerEngine {
     Map<String, String>? httpHeaders,
     bool autoPlay = true,
   }) async {
+    if (_disposed) return;
     _pendingUrl = url;
     _pendingHeaders = httpHeaders;
     _pendingAutoPlay = autoPlay;
-    await _createWhenReady(url, httpHeaders, autoPlay);
+    _updateState(PlayerState(
+      engineType: PlayerEngineType.nativeSurface,
+      playWhenReady: autoPlay,
+    ));
+    await _createWhenReady(url, httpHeaders);
   }
 
   @override
-  Future<void> play() async => _channel?.invokeMethod('command', 'set pause no');
+  Future<void> play() async {
+    if (_disposed) return;
+    _pendingAutoPlay = true;
+    _updateState(_state.copyWith(playWhenReady: true));
+    await _applyPlaybackIntent();
+  }
 
   @override
-  Future<void> pause() async =>
-      _channel?.invokeMethod('command', 'set pause yes');
+  Future<void> pause() async {
+    if (_disposed) return;
+    _pendingAutoPlay = false;
+    _updateState(_state.copyWith(playWhenReady: false));
+    await _applyPlaybackIntent();
+  }
+
+  Future<void> _applyPlaybackIntent() async {
+    if (_disposed || !_nativeReady) return;
+    await _channel?.invokeMethod(
+        'command', _pendingAutoPlay ? 'set pause no' : 'set pause yes');
+  }
 
   @override
   Future<void> seek(Duration position) async => _channel?.invokeMethod(
@@ -243,12 +286,21 @@ class NativeSurfaceEngine implements PlayerEngine {
 
   @override
   Future<void> dispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _nativeReady = false;
+    _pendingAutoPlay = false;
+    _pendingUrl = null;
+    _pendingHeaders = null;
+    _pendingStyle = null;
     _pollTimer?.cancel();
+    final channel = _channel;
+    _channel = null;
+    channel?.setMethodCallHandler(null);
     try {
-      await _channel?.invokeMethod('destroy');
+      await channel?.invokeMethod('destroy');
     } catch (_) {}
     await _stateController.close();
-    _channel = null;
   }
 
   // ── 轨道 / 字幕：直接复用 libmpv 自己的能力 ──

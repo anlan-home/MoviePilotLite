@@ -12,6 +12,8 @@ enum SubscribeItemCardType {
   search,
   detail,
   files,
+  activity,
+  logs,
   pause,
   resume,
   reset,
@@ -26,16 +28,55 @@ class SubscribeItemCard extends StatelessWidget {
     super.key,
     required this.item,
     required this.isTv,
+    this.isMusic = false,
     this.layout = SubscribeItemCardLayout.list,
+    this.showExecutionEntries = false,
     this.onTap,
     this.onMoreTap,
   });
 
   final SubscribeItem item;
   final bool isTv;
+  final bool isMusic;
   final SubscribeItemCardLayout layout;
+
+  /// v3 执行可观测入口（活动记录/运行日志）；v2 服务端隐藏
+  final bool showExecutionEntries;
   final VoidCallback? onTap;
   final Function(SubscribeItemCardType type)? onMoreTap;
+
+  /// 卡片「更多」菜单项集合；执行可观测入口仅在 v3 且非音乐订阅时出现
+  static List<SubscribeItemCardType> menuItemsFor({
+    required bool isMusic,
+    required bool isTv,
+    required bool executionVisible,
+    required bool paused,
+    required bool running,
+  }) {
+    if (isMusic) {
+      return <SubscribeItemCardType>[
+        SubscribeItemCardType.search,
+        if (paused) SubscribeItemCardType.resume,
+        if (running) SubscribeItemCardType.pause,
+        SubscribeItemCardType.delete,
+      ];
+    }
+    return <SubscribeItemCardType>[
+      SubscribeItemCardType.edit,
+      SubscribeItemCardType.search,
+      SubscribeItemCardType.detail,
+      SubscribeItemCardType.files,
+      if (executionVisible) ...[
+        SubscribeItemCardType.activity,
+        SubscribeItemCardType.logs,
+      ],
+      if (paused) SubscribeItemCardType.resume,
+      if (running) SubscribeItemCardType.pause,
+      SubscribeItemCardType.reset,
+      if (isTv) SubscribeItemCardType.shared,
+      SubscribeItemCardType.delete,
+    ];
+  }
 
   static const double _cardRadius = 22;
   static const double _gridCardRadius = 16;
@@ -246,13 +287,26 @@ class SubscribeItemCard extends StatelessWidget {
       return CachedImage(imageUrl: url, fit: BoxFit.cover);
     }
     return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF30435D), Color(0xFF192436)],
-        ),
+      decoration: BoxDecoration(
+        gradient: isMusic
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF8B5CF6), Color(0xFF4C1D95)],
+              )
+            : const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF30435D), Color(0xFF192436)],
+              ),
       ),
+      child: isMusic
+          ? const Icon(
+              Icons.library_music_rounded,
+              size: 42,
+              color: Colors.white,
+            )
+          : null,
     );
   }
 
@@ -535,8 +589,22 @@ class SubscribeItemCard extends StatelessWidget {
       height: _posterHeight,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(14),
-        color: Colors.white.withValues(alpha: 0.16),
+        gradient: isMusic
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFF8B5CF6), Color(0xFF4C1D95)],
+              )
+            : null,
+        color: isMusic ? null : Colors.white.withValues(alpha: 0.16),
       ),
+      child: isMusic
+          ? const Icon(
+              Icons.library_music_rounded,
+              size: 30,
+              color: Colors.white,
+            )
+          : null,
     );
   }
 
@@ -544,23 +612,13 @@ class SubscribeItemCard extends StatelessWidget {
     final isPaused = item.state?.toUpperCase() == 'S';
     final isRunning = item.state?.toUpperCase() == 'R';
     final size = compact ? 34.0 : 30.0;
-    final items = [
-      SubscribeItemCardType.edit,
-      SubscribeItemCardType.search,
-      SubscribeItemCardType.detail,
-      SubscribeItemCardType.files,
-    ];
-    if (isPaused) {
-      items.add(SubscribeItemCardType.resume);
-    }
-    if (isRunning) {
-      items.add(SubscribeItemCardType.pause);
-    }
-    items.add(SubscribeItemCardType.reset);
-    if (isTv) {
-      items.add(SubscribeItemCardType.shared);
-    }
-    items.add(SubscribeItemCardType.delete);
+    final items = menuItemsFor(
+      isMusic: isMusic,
+      isTv: isTv,
+      executionVisible: showExecutionEntries,
+      paused: isPaused,
+      running: isRunning,
+    );
     return PopupMenuButton(
       onSelected: onMoreTap,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -611,6 +669,10 @@ class SubscribeItemCard extends StatelessWidget {
         return Icons.info;
       case SubscribeItemCardType.files:
         return Icons.folder_open;
+      case SubscribeItemCardType.activity:
+        return CupertinoIcons.clock;
+      case SubscribeItemCardType.logs:
+        return CupertinoIcons.doc_text;
       case SubscribeItemCardType.pause:
         return Icons.pause;
       case SubscribeItemCardType.resume:
@@ -634,6 +696,10 @@ class SubscribeItemCard extends StatelessWidget {
         return '详情';
       case SubscribeItemCardType.files:
         return '文件统计';
+      case SubscribeItemCardType.activity:
+        return '活动记录';
+      case SubscribeItemCardType.logs:
+        return '运行日志';
       case SubscribeItemCardType.pause:
         return '暂停';
       case SubscribeItemCardType.resume:
@@ -657,6 +723,10 @@ class SubscribeItemCard extends StatelessWidget {
         return Colors.green;
       case SubscribeItemCardType.files:
         return const Color(0xFF64D2FF);
+      case SubscribeItemCardType.activity:
+        return const Color(0xFF30B0C7);
+      case SubscribeItemCardType.logs:
+        return const Color(0xFFBF5AF2);
       case SubscribeItemCardType.pause:
         return Colors.orange;
       case SubscribeItemCardType.resume:

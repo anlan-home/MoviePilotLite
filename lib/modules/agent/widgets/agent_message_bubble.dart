@@ -7,9 +7,14 @@ import 'package:moviepilot_mobile/utils/open_url.dart';
 import 'package:moviepilot_mobile/widgets/cached_image.dart';
 
 class AgentMessageBubble extends StatelessWidget {
-  const AgentMessageBubble({super.key, required this.message});
+  const AgentMessageBubble({
+    super.key,
+    required this.message,
+    this.onAttachmentTap,
+  });
 
   final AgentChatMessage message;
+  final ValueChanged<AgentAttachment>? onAttachmentTap;
 
   @override
   Widget build(BuildContext context) {
@@ -97,7 +102,10 @@ class AgentMessageBubble extends StatelessWidget {
                                   ),
                           if (message.attachments.isNotEmpty) ...[
                             const SizedBox(height: 10),
-                            _AttachmentList(attachments: message.attachments),
+                            _AttachmentList(
+                              attachments: message.attachments,
+                              onAttachmentTap: onAttachmentTap,
+                            ),
                           ],
                           if (message.status ==
                               AgentMessageStatus.streaming) ...[
@@ -866,9 +874,10 @@ class _ToolEvents extends StatelessWidget {
 }
 
 class _AttachmentList extends StatelessWidget {
-  const _AttachmentList({required this.attachments});
+  const _AttachmentList({required this.attachments, this.onAttachmentTap});
 
   final List<AgentAttachment> attachments;
+  final ValueChanged<AgentAttachment>? onAttachmentTap;
 
   @override
   Widget build(BuildContext context) {
@@ -877,9 +886,14 @@ class _AttachmentList extends StatelessWidget {
       runSpacing: 8,
       children: [
         for (final attachment in attachments)
-          attachment.isImage
+          attachment.isImage && !attachment.url.contains('message/agent/file/')
               ? _ImageAttachment(attachment: attachment)
-              : _FileAttachment(attachment: attachment),
+              : _FileAttachment(
+                  attachment: attachment,
+                  onTap: onAttachmentTap == null
+                      ? null
+                      : () => onAttachmentTap!(attachment),
+                ),
       ],
     );
   }
@@ -912,9 +926,10 @@ class _ImageAttachment extends StatelessWidget {
 }
 
 class _FileAttachment extends StatelessWidget {
-  const _FileAttachment({required this.attachment});
+  const _FileAttachment({required this.attachment, this.onTap});
 
   final AgentAttachment attachment;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -923,6 +938,8 @@ class _FileAttachment extends StatelessWidget {
     return InkWell(
       onTap: attachment.url.isEmpty
           ? null
+          : attachment.url.contains('message/agent/file/')
+          ? onTap
           : () => WebUtil.open(url: attachment.url),
       borderRadius: BorderRadius.circular(12),
       child: Container(

@@ -16,6 +16,18 @@ import '../controllers/profile_controller.dart';
 class ProfilePage extends GetView<ProfileController> {
   const ProfilePage({super.key});
 
+  /// 点击头像：从相册选择并上传（POST /api/v1/user/avatar/{user_id}）。
+  Future<void> _pickAvatar() async {
+    ToastUtil.loading(message: '正在上传头像…');
+    final error = await controller.pickAndUploadAvatar();
+    ToastUtil.dismiss();
+    if (error == null) {
+      ToastUtil.success('头像已更新');
+    } else if (error.isNotEmpty) {
+      ToastUtil.error(error);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -121,7 +133,34 @@ class ProfilePage extends GetView<ProfileController> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            _buildAvatar(userInfo?.avatar ?? profile.avatar),
+            GestureDetector(
+              onTap: _pickAvatar,
+              child: Stack(
+                children: [
+                  _buildAvatar(userInfo?.avatar ?? profile.avatar),
+                  Positioned(
+                    right: 0,
+                    bottom: 0,
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.surface,
+                          width: 2,
+                        ),
+                      ),
+                      child: Icon(
+                        Icons.photo_camera_rounded,
+                        size: 11,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(
@@ -229,10 +268,27 @@ class ProfilePage extends GetView<ProfileController> {
             value: 'Level ${profile.level}',
           ),
           const Divider(height: 20),
-          _buildInfoRow(
-            icon: CupertinoIcons.lock_shield,
-            label: '二步验证',
-            value: (userInfo?.isOtp == true) ? '已开启' : '未开启',
+          GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => Get.toNamed('/mfa-settings'),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _buildInfoRow(
+                    icon: CupertinoIcons.lock_shield,
+                    label: '二步验证',
+                    value: (userInfo?.isOtp == true) ? '已开启' : '未开启',
+                  ),
+                ),
+                Icon(
+                  CupertinoIcons.chevron_right,
+                  size: 16,
+                  color: Theme.of(Get.context!)
+                      .colorScheme
+                      .onSurfaceVariant,
+                ),
+              ],
+            ),
           ),
         ],
       ),

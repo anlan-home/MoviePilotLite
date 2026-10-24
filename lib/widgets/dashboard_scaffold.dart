@@ -142,7 +142,7 @@ class _DashboardBackgroundImage extends StatefulWidget {
 
 class _DashboardBackgroundImageState extends State<_DashboardBackgroundImage> {
   Uint8List? _bytes;
-  MemoryImage? _imageProvider;
+  ImageProvider? _imageProvider;
 
   @override
   void didChangeDependencies() {
@@ -167,7 +167,18 @@ class _DashboardBackgroundImageState extends State<_DashboardBackgroundImage> {
     }
     if (identical(_bytes, bytes) && _imageProvider != null) return;
     _bytes = bytes;
-    final provider = MemoryImage(bytes);
+    // 用户相册里的原图动辄上千万像素，按原尺寸解码既慢又吃内存；
+    // 全屏 cover 显示时只需要高度覆盖屏幕长边，按这个尺寸解码即可（不放大）。
+    final mediaQuery = MediaQuery.maybeOf(context);
+    final memoryImage = MemoryImage(bytes);
+    final ImageProvider provider;
+    if (mediaQuery == null || mediaQuery.size.longestSide <= 0) {
+      provider = memoryImage;
+    } else {
+      final targetHeight =
+          (mediaQuery.size.longestSide * mediaQuery.devicePixelRatio).ceil();
+      provider = ResizeImage(memoryImage, height: targetHeight);
+    }
     _imageProvider = provider;
     precacheImage(provider, context);
   }

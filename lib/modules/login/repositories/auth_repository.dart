@@ -19,6 +19,28 @@ import '../../../services/hive_service.dart';
 import '../models/login_profile.dart';
 import '../models/login_response.dart';
 
+/// 服务端要求二次验证：密码校验通过后需携带动态验证码（otp_password）重试登录。
+class MfaRequiredException implements Exception {
+  MfaRequiredException({required this.mfaMethods, this.message});
+
+  /// 服务端声明的二次验证方式，原样保留以备后续扩展（当前仅支持 otp）。
+  final List<String> mfaMethods;
+  final String? message;
+
+  @override
+  String toString() => message ?? '需要二次验证';
+}
+
+/// 登录凭据错误：保留服务端返回的错误信息用于展示。
+class LoginCredentialException implements Exception {
+  LoginCredentialException(this.message);
+
+  final String message;
+
+  @override
+  String toString() => message;
+}
+
 class AuthRepository extends GetxService {
   final _talker = Get.find<AppLog>();
   final _api = Get.find<ApiClient>();
@@ -95,17 +117,13 @@ class AuthRepository extends GetxService {
     required String password,
     String otpPassword = '',
   }) async {
-    final normalizedServer = _normalizeServer(server);
-
-    // 每次登录前根据用户输入的服务器地址配置 API 客户端
-    _api.setBaseUrl(normalizedServer);
-    _talker.info('开始登录: $username @ $normalizedServer');
-
-    final response = await _api.postForm<Map<String, dynamic>>(
-      '/api/v1/login/access-token',
-      {'username': username, 'password': password, 'otp_password': otpPassword},
+    final login = await requestLoginToken(
+      server: server,
+      username: username,
+      password: password,
+      otpPassword: otpPassword,
     );
-    final login = LoginResponse.fromJson(response.data!);
+    final normalizedServer = _normalizeServer(server);
     _talker.info('登录成功: $username');
     _serverApiVersionService.reset();
     // 登录成功后，后续请求统一携带 Token
@@ -131,6 +149,94 @@ class AuthRepository extends GetxService {
     _syncSystemMessagePolling();
 
     return login;
+  }
+
+  /// 请求登录令牌。服务端要求二次验证时抛 [MfaRequiredException]，
+  /// 携带验证码重试即可；其余 401 归一为 [LoginCredentialException]，
+  /// 网络等其他错误原样抛出。登录请求自身跳过全局 401 处置，避免误触发静默重登。
+  Future<LoginResponse> requestLoginToken({
+    required String server,
+    required String username,
+    required String password,
+    String otpPassword = '',
+  }) async {
+    final normalizedServer = _normalizeServer(server);
+
+    // 每次登录前根据用户输入的服务器地址配置 API 客户端
+    _api.setBaseUrl(normalizedServer);
+    _talker.info('开始登录: $username @ $normalizedServer');
+
+    try {
+      final response = await _api.postForm<Map<String, dynamic>>(
+        '/api/v1/login/access-token',
+        {
+          'username': username,
+          'password': password,
+          'otp_password': otpPassword,
+        },
+        skipUnauthorizedHandling: true,
+      );
+      // Web 端非 2xx 不抛 DioException，这里统一补一次挑战识别
+      final challenge = parseMfaChallenge(response);
+      if (challenge != null) throw challenge;
+      if (response.statusCode == 401) {
+        throw LoginCredentialException(_serverErrorMessage(response));
+      }
+      return LoginResponse.fromJson(response.data!);
+    } on DioException catch (e) {
+      if (e.response?.statusCode != 401) rethrow;
+      final challenge = parseMfaChallenge(e.response);
+      if (challenge != null) throw challenge;
+      throw LoginCredentialException(_serverErrorMessage(e.response));
+    }
+  }
+
+  /// 从 401 响应识别 MFA challenge：响应头 X-MFA-Required: true（不区分大小写），
+  /// 或响应体携带非空 mfa_methods（v3 在信封 data 内，v2 在顶层）。无标记返回 null。
+  static MfaRequiredException? parseMfaChallenge(Response<dynamic>? response) {
+    if (response?.statusCode != 401) return null;
+    var headerMarked = false;
+    response!.headers.map.forEach((key, value) {
+      if (key.toLowerCase() == 'x-mfa-required' &&
+          value.join(',').trim().toLowerCase() == 'true') {
+        headerMarked = true;
+      }
+    });
+    var methods = const <String>[];
+    String? message;
+    final body = _decodeBody(response.data);
+    if (body is Map) {
+      final data = body['data'];
+      final challengeMap = data is Map ? data : body;
+      final raw = challengeMap['mfa_methods'];
+      if (raw is List) {
+        methods = raw.whereType<String>().toList();
+      }
+      final rawMessage = body['message'] ?? body['detail'];
+      if (rawMessage != null) message = rawMessage.toString();
+    }
+    if (!headerMarked && methods.isEmpty) return null;
+    return MfaRequiredException(mfaMethods: methods, message: message);
+  }
+
+  static String _serverErrorMessage(Response<dynamic>? response) {
+    final body = _decodeBody(response?.data);
+    if (body is Map) {
+      final message = body['message'] ?? body['detail'];
+      if (message is String && message.trim().isNotEmpty) return message;
+    }
+    return '用户名或密码错误';
+  }
+
+  static dynamic _decodeBody(dynamic data) {
+    if (data is String) {
+      try {
+        return jsonDecode(data);
+      } catch (_) {
+        return null;
+      }
+    }
+    return data;
   }
 
   /// 更新用户信息

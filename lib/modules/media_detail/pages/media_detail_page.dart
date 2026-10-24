@@ -25,6 +25,7 @@ import 'package:moviepilot_mobile/widgets/app_loading.dart';
 import 'package:moviepilot_mobile/widgets/cached_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:skeletonizer/skeletonizer.dart';
+import 'package:moviepilot_mobile/modules/tmdb/pages/tmdb_collection_page.dart';
 
 class MediaDetailPage extends GetWidget<MediaDetailController> {
   const MediaDetailPage({super.key});
@@ -617,6 +618,18 @@ class MediaDetailPage extends GetWidget<MediaDetailController> {
             const SizedBox(height: 16),
           ],
           _buildOverView(context, detail),
+          if ((detail.collection_id ?? 0) > 0) ...[
+            const SizedBox(height: 16),
+            _buildGlassPanel(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: const Icon(Icons.collections_bookmark_outlined),
+                title: const Text('查看系列合集'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Get.to(() => TmdbCollectionPage(collectionId: detail.collection_id!)),
+              ),
+            ),
+          ],
           if (detail.season_info != null && detail.season_info!.isNotEmpty) ...[
             const SizedBox(height: 16),
             _buildSectionTitle('季度信息'),

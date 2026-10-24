@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:moviepilot_mobile/modules/music/models/music_models.dart';
 import 'package:moviepilot_mobile/modules/recommend/controllers/recommend_controller.dart';
 import 'package:moviepilot_mobile/modules/recommend/models/recommend_api_item.dart';
 import 'package:moviepilot_mobile/modules/recommend/widgets/recommend_category_item_card.dart';
@@ -67,6 +70,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final canSearch = Get.find<AppService>().canSearch;
     return SliverAppBar(
       pinned: true,
       stretch: true,
@@ -80,26 +84,27 @@ class SearchIndexPage extends GetView<SearchIndexController> {
       ),
       automaticallyImplyLeading: false,
       actions: [
-        TextButton.icon(
-          onPressed: () => Get.toNamed('/search-result'),
-          icon: Icon(
-            Icons.history_rounded,
-            size: 18,
-            color: colorScheme.onSurface.withValues(alpha: 0.86),
-          ),
-          label: Text(
-            '近期搜索',
-            style: theme.textTheme.labelLarge?.copyWith(
+        if (canSearch)
+          TextButton.icon(
+            onPressed: () => Get.toNamed('/search-result'),
+            icon: Icon(
+              Icons.history_rounded,
+              size: 18,
               color: colorScheme.onSurface.withValues(alpha: 0.86),
-              fontWeight: FontWeight.w600,
+            ),
+            label: Text(
+              '近期搜索',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: colorScheme.onSurface.withValues(alpha: 0.86),
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
           ),
-          style: TextButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            minimumSize: Size.zero,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          ),
-        ),
         const SizedBox(width: 4),
       ],
       flexibleSpace: FlexibleSpaceBar(
@@ -323,13 +328,24 @@ class SearchIndexPage extends GetView<SearchIndexController> {
   }
 
   List<Widget> _buildIdleContent(BuildContext context) {
+    final canDiscovery = Get.find<AppService>().canDiscovery;
+    // 音乐库入口只挂在「浏览」宫格末尾，且不依赖发现权限，
+    // 所以无发现权限时宫格仍要保留给音乐卡。
+    final showBrowse = canDiscovery || controller.musicBrowseSupported.value;
     return [
-      _idleSectionTitle(context, '为你推荐'),
-      _buildRecommendMediaPager(context),
-      const SizedBox(height: 18),
-      _idleSectionTitle(context, '浏览'),
-      _buildBrowseCategoriesGrid(context),
-      const SizedBox(height: 18),
+      if (canDiscovery) ...[
+        _idleSectionTitle(context, '为你推荐'),
+        _buildRecommendMediaPager(context),
+        const SizedBox(height: 18),
+      ],
+      if (showBrowse) ...[
+        _idleSectionTitle(context, '浏览'),
+        _buildBrowseCategoriesGrid(
+          context,
+          includeRecommendCategories: canDiscovery,
+        ),
+        const SizedBox(height: 18),
+      ],
     ];
   }
 
@@ -503,11 +519,21 @@ class SearchIndexPage extends GetView<SearchIndexController> {
     );
   }
 
-  Widget _buildBrowseCategoriesGrid(BuildContext context) {
-    final rec = Get.find<RecommendController>();
+  Widget _buildBrowseCategoriesGrid(
+    BuildContext context, {
+    required bool includeRecommendCategories,
+  }) {
+    // 无发现权限时不触碰 RecommendController，避免为不可访问的内容发起加载。
+    final rec = includeRecommendCategories
+        ? Get.find<RecommendController>()
+        : null;
+    controller.ensureMusicBrowseLoaded();
     return Obx(() {
-      final categories = rec.allVisibleSubCategories;
-      if (categories.isEmpty) return const SizedBox.shrink();
+      final categories = rec?.allVisibleSubCategories ?? const <String>[];
+      final showMusic = controller.musicBrowseSupported.value;
+      if (categories.isEmpty && !showMusic) return const SizedBox.shrink();
+      final musicItems = controller.musicExploreItems.take(2).toList();
+      final total = categories.length + (showMusic ? 1 : 0);
       return Padding(
         padding: const EdgeInsets.only(top: 4),
         child: LayoutBuilder(
@@ -521,7 +547,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
             crossAxisCount = crossAxisCount.clamp(2, 10);
             final cellW = (w - (crossAxisCount - 1) * spacing) / crossAxisCount;
             final cellH = cellW / ratio;
-            final rows = (categories.length / crossAxisCount).ceil();
+            final rows = (total / crossAxisCount).ceil();
             final h = rows * cellH + (rows - 1) * spacing;
             return SizedBox(
               height: h,
@@ -534,11 +560,16 @@ class SearchIndexPage extends GetView<SearchIndexController> {
                   crossAxisSpacing: spacing,
                   childAspectRatio: ratio,
                 ),
-                itemCount: categories.length,
+                itemCount: total,
                 itemBuilder: (context, index) {
+                  if (showMusic && index == categories.length) {
+                    return _MusicBrowseCard(items: musicItems);
+                  }
                   final name = categories[index];
-                  final key = rec.keyForSubCategory(name);
-                  final items = rec.itemsForSubCategory(name).take(3).toList();
+                  final recommend = rec!;
+                  final key = recommend.keyForSubCategory(name);
+                  final items =
+                      recommend.itemsForSubCategory(name).take(3).toList();
                   return RecommendCategoryItemCard(
                     name: name,
                     items: items,
@@ -606,6 +637,7 @@ class SearchIndexPage extends GetView<SearchIndexController> {
 
   List<Widget> _buildSuggestionContent(BuildContext context) {
     final mediaSuggestions = controller.mediaSuggestionItems;
+    final musicSuggestions = controller.musicSuggestionItems;
     final siteSuggestions = controller.siteSuggestionItems;
     final historyItems = controller.localHistorySuggestionItems;
     final groups = <_SearchSuggestionGroup>[];
@@ -618,6 +650,17 @@ class SearchIndexPage extends GetView<SearchIndexController> {
           icon: CupertinoIcons.film,
           color: const Color(0xFF2563EB),
           items: mediaSuggestions,
+        ),
+      );
+    }
+    if (musicSuggestions.isNotEmpty) {
+      groups.add(
+        _SearchSuggestionGroup(
+          title: '音乐推荐',
+          subtitle: '音乐人、专辑与单曲',
+          icon: CupertinoIcons.music_note,
+          color: const Color(0xFF8B5CF6),
+          items: musicSuggestions,
         ),
       );
     }
@@ -794,6 +837,8 @@ class SearchIndexPage extends GetView<SearchIndexController> {
         return CupertinoIcons.square_stack_3d_up;
       case SearchSuggestionCategory.actor:
         return CupertinoIcons.person_2;
+      case SearchSuggestionCategory.music:
+        return CupertinoIcons.music_note;
       case SearchSuggestionCategory.share:
         return CupertinoIcons.arrowshape_turn_up_right;
       case SearchSuggestionCategory.history:
@@ -1098,5 +1143,101 @@ class _SuggestionTile extends StatelessWidget {
       spans.add(TextSpan(text: text.substring(start), style: base));
     }
     return spans;
+  }
+}
+
+/// "浏览"宫格末尾的音乐入口卡片：展示探索专辑封面，点击进入音乐库
+class _MusicBrowseCard extends StatelessWidget {
+  const _MusicBrowseCard({required this.items});
+
+  final List<MusicExploreItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = [Colors.deepPurple.shade600, Colors.indigo.shade800];
+    return GestureDetector(
+      onTap: () => Get.toNamed('/music'),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(15),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              colors[0].withValues(alpha: 0.9),
+              colors[1].withValues(alpha: 0.95),
+            ],
+          ),
+        ),
+        child: Stack(
+          children: [
+            if (items.isNotEmpty)
+              Positioned(top: 12, right: 12, child: _buildCoverStack(items))
+            else
+              Positioned(
+                top: 12,
+                right: 12,
+                child: Icon(
+                  Icons.library_music_rounded,
+                  size: 40,
+                  color: Colors.white.withValues(alpha: 0.85),
+                ),
+              ),
+            const Align(
+              alignment: Alignment.bottomLeft,
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  '音乐',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCoverStack(List<MusicExploreItem> items) {
+    const size = 48.0;
+    const radius = 10.0;
+    const angles = [-15.0, 15.0];
+    final widgets = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      final url = items[i].coverUrl;
+      if (url == null || url.isEmpty) continue;
+      final angle = angles[i % 2] * math.pi / 180;
+      widgets.add(
+        Positioned(
+          left: i * 28.0,
+          top: i * 5,
+          child: Transform.rotate(
+            angle: angle,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(radius),
+              child: CachedImage(
+                imageUrl: ImageUtil.convertCacheImageUrl(url),
+                width: size,
+                height: size,
+                fit: BoxFit.cover,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+    if (widgets.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      width: size + (widgets.length > 1 ? 28.0 : 0),
+      height: size + 12,
+      child: Stack(children: widgets.reversed.toList()),
+    );
   }
 }
