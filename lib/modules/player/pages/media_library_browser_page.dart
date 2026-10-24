@@ -167,14 +167,16 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
     return null;
   }
 
-  /// kit 浏览网格点条目:有 TMDB 身份时打开 MP 媒体详情页(观感与 MP 一致),
+  /// kit 浏览网格点条目:优先打开 MP 媒体详情页(观感与 Emby/Jellyfin 一致),
   /// 同时携带媒体服务器条目上下文,详情页播放区可直连起播;返回 false 交给
-  /// kit 默认详情页(无 TMDB 映射的条目)。
-  bool _openItemDetail(kit.MediaItem item) {
-    final tmdbId = item.tmdbId;
-    if (tmdbId == null || tmdbId <= 0) return false;
-    final pathKey = 'tmdb:$tmdbId';
-    PlayerLaunchController.to.resumeContexts[pathKey] = ResumeContext(
+  /// kit 默认详情页。
+  ///
+  /// 飞牛条目不带 TMDB 标识(API 只给 imdb_id),所以无标识时先按
+  /// 标题+年份+类型查一次 MP 媒体身份,命中才跳 MP 详情页。
+  Future<bool> _openItemDetail(kit.MediaItem item) async {
+    final path = await _resolveMediaPath(item);
+    if (path == null) return false;
+    PlayerLaunchController.to.resumeContexts[path] = ResumeContext(
       itemId: item.id,
       serverName: _server!.name,
       serverType: _server!.type.name,
@@ -183,11 +185,88 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
       isSeries: item.type == kit.MediaType.series,
     );
     Get.toNamed('/media-detail', parameters: {
-      'path': 'tmdb:$tmdbId',
+      'path': path,
       'title': item.title,
       'type_name': item.type == kit.MediaType.series ? '电视剧' : '电影',
+      if (item.year != null && item.year! > 0) 'year': '${item.year}',
     });
     return true;
+  }
+
+  /// 解析条目的 MP 媒体标识(如 tmdb:123)。
+  Future<String?> _resolveMediaPath(kit.MediaItem item) async {
+    final tmdbId = item.tmdbId;
+    if (tmdbId != null && tmdbId > 0) return 'tmdb:$tmdbId';
+    final title = item.title.trim();
+    if (title.isEmpty) return null;
+    try {
+      final api = Get.find<ApiClient>();
+      final resp = await api.get<dynamic>(
+        '/api/v1/media/search',
+        queryParameters: {'title': title, 'type': 'media', 'count': 20},
+      );
+      if ((resp.statusCode ?? 0) != 200) return null;
+      final data = resp.data;
+      dynamic list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map) {
+        list = data['items'] ?? data['value'] ?? data['data'];
+        if (list is Map) list = list['items'] ?? list['value'];
+      }
+      if (list is! List) return null;
+      final wantType = item.type == kit.MediaType.series ? '电视剧' : '电影';
+      final wantTitle = _normalizeTitle(title);
+      final wantYear = item.year;
+      String? loose;
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final m = Map<String, dynamic>.from(raw);
+        final path = _mediaPathOf(m);
+        if (path == null) continue;
+        final type = (m['type'] ?? '').toString();
+        if (type.isNotEmpty && !type.contains(wantType)) continue;
+        final titles = <Object?>[
+          m['title'],
+          m['en_title'],
+          m['original_title'],
+          m['original_name'],
+        ]
+            .whereType<Object>()
+            .map((e) => _normalizeTitle(e.toString()))
+            .toList();
+        final titleMatch = titles.contains(wantTitle);
+        final yearStr = (m['year'] ?? '').toString();
+        final year = int.tryParse(
+            yearStr.length >= 4 ? yearStr.substring(0, 4) : yearStr);
+        final yearMatch =
+            wantYear == null || year == null || (year - wantYear).abs() <= 1;
+        if (titleMatch && yearMatch) return path;
+        if (titleMatch && loose == null) loose = path;
+      }
+      return loose;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _normalizeTitle(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'''[\s·:：\-—_.,，。!！?？"“”'‘’()（）\[\]【】]'''), '');
+
+  String? _mediaPathOf(Map<String, dynamic> m) {
+    final tmdb = m['tmdb_id'];
+    if (tmdb != null) {
+      final id = tmdb is num ? tmdb.toInt() : int.tryParse(tmdb.toString());
+      if (id != null && id > 0) return 'tmdb:$id';
+    }
+    final source = (m['media_source'] ?? '').toString().toLowerCase();
+    final mediaId = (m['media_id'] ?? '').toString();
+    if (mediaId.isEmpty) return null;
+    if (source == 'tmdb') return 'tmdb:$mediaId';
+    if (source == 'douban') return 'douban:$mediaId';
+    if (source == 'bangumi') return 'bangumi:$mediaId';
+    return null;
   }
 
   @override
