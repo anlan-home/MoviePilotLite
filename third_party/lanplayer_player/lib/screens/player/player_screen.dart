@@ -434,7 +434,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
 
     final settings = ref.read(playerSettingsProvider);
     _cachedDisplay = ref.read(danmakuDisplayProvider);
-    _danmakuEnabled = settings.enableDanmakuByDefault;
+    // 弹幕开关按"上次使用状态"恢复；没有记录时才用设置里的默认值。
+    // 旧实现每次都拿默认值重置，用户关掉后下次进来又变开。
+    _danmakuEnabled = (StorageService.isInitialized
+            ? StorageService.getBool(StorageService.danmakuEnabledKey)
+            : null) ??
+        settings.enableDanmakuByDefault;
     // 创建弹幕控制器并初始化（屏幕尺寸在 build 中更新）
     _danmakuController = DanmakuController(this);
     _danmakuController.init(
@@ -2671,11 +2676,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _danmakuController.seekTo(clamped);
   }
 
-  void _toggleDanmaku() {
+  void _toggleDanmaku() => _setDanmakuEnabled(!_danmakuEnabled);
+
+  /// 弹幕开关的唯一写入点：内存状态 + 渲染器 + 本地持久化。
+  /// 持久化之后，退出重进或换别的视频都会沿用上次的开关状态。
+  void _setDanmakuEnabled(bool value) {
+    if (_danmakuEnabled == value) return;
     setState(() {
-      _danmakuEnabled = !_danmakuEnabled;
-      _danmakuController.setEnabled(_danmakuEnabled);
+      _danmakuEnabled = value;
+      _danmakuController.setEnabled(value);
     });
+    if (StorageService.isInitialized) {
+      unawaited(
+          StorageService.setBool(StorageService.danmakuEnabledKey, value));
+    }
   }
 
   void _setFitMode(BoxFit? mode) {
@@ -3878,12 +3892,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         : _activeMedia.title;
     return _DanmakuRightPanel(
       danmakuEnabled: _danmakuEnabled,
-      onToggleDanmaku: (v) {
-        setState(() {
-          _danmakuEnabled = v;
-          _danmakuController.setEnabled(v);
-        });
-      },
+      onToggleDanmaku: _setDanmakuEnabled,
       onClose: () => setState(() => _rightPanelType = null),
       danmakuCount: _loadedDanmakuCount,
       danmakuSourceName: _loadedDanmakuSource,
