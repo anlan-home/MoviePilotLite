@@ -200,6 +200,20 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
   Timer? _prepareDelayTimer;
   Timer? _prepareTimeoutTimer;
 
+  // ── 横竖屏切换闸门（消除旋转叠影）──
+  // 系统旋转动画会拿"旋转起点"的整窗截图做缩放卡片叠在实时画面上；如果
+  // 播放器 UI 在动画期间已经绘制出来，快照就会和实时画面叠成两份（真机：
+  // HyperOS 旋转动画约 0.5-0.7s）。所以进入时先黑屏，等横屏布局就绪后
+  // **继续黑屏一个动画时长**再显示；退出时先黑屏再恢复竖屏，让旋转动画
+  // 只能叠到黑底上。
+  bool _layoutReady = true;
+  Timer? _layoutFallbackTimer;
+  Timer? _revealTimer;
+  DateTime? _landscapeSince;
+  bool _exiting = false;
+  Timer? _exitWaitTimer;
+  bool _popIssued = false;
+
   /// 该媒体是不是原盘 ISO（决定加载文案是"正在解析原盘…"还是"正在连接服务端…"）
   bool get _mediaLooksLikeIso {
     final vt = widget.media.videoTracks;
@@ -457,6 +471,15 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
       ]);
+      // 旋转动画开始前先把画面切成纯黑：快照里只有黑底，不会出现两份 UI。
+      // 横屏布局就绪后再多黑一个动画时长（didChangeDependencies 里放行）；
+      // 系统拒绝旋转时由 1.2s 兜底，避免一直黑屏。
+      _layoutReady = false;
+      _layoutFallbackTimer?.cancel();
+      _layoutFallbackTimer = Timer(const Duration(milliseconds: 1200), () {
+        if (!mounted || _isDisposed || _layoutReady || _exiting) return;
+        setState(() => _layoutReady = true);
+      });
     }
     // 提前获取屏幕尺寸，确保弹幕更新时 _screenWidth != 0
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -468,6 +491,45 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         _danmakuController.setDevicePixelRatio(MediaQuery.of(context).devicePixelRatio);
       }
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_isAudio) return;
+    final orientation = MediaQuery.of(context).orientation;
+    if (_exiting) {
+      // 退出流程：等方向真正回到竖屏后再出栈（导航放到帧末，避免在
+      // build 阶段触发路由变更）。
+      if (orientation == Orientation.portrait) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _finishExit());
+      }
+      return;
+    }
+    if (!_layoutReady && orientation == Orientation.landscape) {
+      // 横屏布局已就绪，但系统旋转动画还在跑，而且流可能还没出画面。
+      // 继续黑屏（转圈）到动画过完、画面真正开始，再显示播放器 UI：
+      // 纯黑画面上的控制栏没有意义，也最容易和动画残留快照叠影。
+      _layoutFallbackTimer?.cancel();
+      _layoutFallbackTimer = null;
+      _landscapeSince ??= DateTime.now();
+      _revealTimer ??= Timer(const Duration(milliseconds: 700), _maybeReveal);
+    }
+  }
+
+  void _maybeReveal() {
+    if (!mounted || _isDisposed || _exiting || _layoutReady) return;
+    final waited = _landscapeSince == null
+        ? Duration.zero
+        : DateTime.now().difference(_landscapeSince!);
+    // 画面还没真正开始（解码/缓冲中）时继续显示加载态；最多等到 2.2s，
+    // 避免个别片源迟迟不出画面时用户一直看不到控制栏。
+    if (!_isPlaying && waited < const Duration(milliseconds: 2200)) {
+      _revealTimer = Timer(const Duration(milliseconds: 150), _maybeReveal);
+      return;
+    }
+    setState(() => _layoutReady = true);
+    AppLog.i('Player', '旋转动画结束/画面就绪，显示播放器 UI');
   }
 
   @override
@@ -498,6 +560,12 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _prepareDelayTimer = null;
     _prepareTimeoutTimer?.cancel();
     _prepareTimeoutTimer = null;
+    _layoutFallbackTimer?.cancel();
+    _layoutFallbackTimer = null;
+    _revealTimer?.cancel();
+    _revealTimer = null;
+    _exitWaitTimer?.cancel();
+    _exitWaitTimer = null;
     WidgetsBinding.instance.removeObserver(this);
     _cleanup();
     super.dispose();
@@ -3231,13 +3299,36 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     _danmakuController.updateScreenSize(_screenWidth, _screenHeight);
     if (_isAudio) return _buildAudioPlayer();
 
+    // 旋转过渡期只画纯黑：视频层/控制栏都不建，系统旋转动画的快照里
+    // 就只有黑底，不会出现"两份播放器界面"。退出时不画任何东西。
+    if (!_layoutReady) {
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) _requestExit();
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(
+            child: _exiting
+                ? const SizedBox.shrink()
+                : const SizedBox(
+                    width: 28,
+                    height: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2.4,
+                      color: Colors.white70,
+                    ),
+                  ),
+          ),
+        ),
+      );
+    }
+
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          _cleanup();
-          Navigator.pop(context);
-        }
+        if (!didPop) _requestExit();
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -3289,7 +3380,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
                       ),
                       SizedBox(height: 24),
                       TextButton(
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: _requestExit,
                         child: Text('返回', style: TextStyle(color: Colors.white)),
                       ),
                     ],
@@ -3579,6 +3670,47 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
     SystemChrome.setPreferredOrientations(DeviceOrientation.values);
   }
 
+  /// 退出播放页：先把画面切成纯黑并让黑帧真正上屏，再恢复竖屏，等方向
+  /// 真正变回来（或 450ms 兜底）后才清理并出栈。旋转动画只会在黑底上做
+  /// 缩放卡片。
+  void _requestExit() {
+    if (_exiting) return;
+    _exiting = true;
+    _layoutFallbackTimer?.cancel();
+    _layoutFallbackTimer = null;
+    _revealTimer?.cancel();
+    _revealTimer = null;
+    _hideTimer?.cancel();
+    setState(() => _layoutReady = false);
+    _engine?.pause();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // 合成器至少落后一帧：立刻转屏会把"还没变黑"的播放器画面抓进旋转
+      // 快照（真机证实会出现半透明播放器 UI 叠在旋转卡片上）。等黑帧稳定
+      // 呈现后再请求转屏。
+      Future<void>.delayed(const Duration(milliseconds: 120), () {
+        if (!mounted) return;
+        _restoreOrientation();
+        if (MediaQuery.of(context).orientation == Orientation.portrait) {
+          // 本来就是竖屏（比如还没转横屏就退出），无需等旋转
+          _finishExit();
+          return;
+        }
+        _exitWaitTimer?.cancel();
+        _exitWaitTimer = Timer(const Duration(milliseconds: 450), _finishExit);
+      });
+    });
+  }
+
+  void _finishExit() {
+    if (!mounted || _popIssued) return;
+    _popIssued = true;
+    _exitWaitTimer?.cancel();
+    _exitWaitTimer = null;
+    _cleanup();
+    Navigator.pop(context);
+  }
+
   Widget _buildTopBar() {
     // 全宽渐变 scrim：与底栏呼应的 Netflix/Streama 式顶部渐变压暗。
     // 贴顶不悬浮：按钮为纯白图标（仅阴影），去掉玻璃浮层感；
@@ -3609,7 +3741,7 @@ class _PlayerScreenState extends ConsumerState<PlayerScreen>
         ),
         child: Row(
           children: [
-            _buildTopBarIcon(Icons.arrow_back_rounded, () => Navigator.pop(context), size: 24),
+            _buildTopBarIcon(Icons.arrow_back_rounded, _requestExit, size: 24),
             const SizedBox(width: 4),
             Expanded(
               child: Row(
