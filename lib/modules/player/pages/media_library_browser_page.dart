@@ -62,13 +62,28 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
       if (kitServer == null) {
         setState(() {
           _loading = false;
-          _error = '媒体服务器不可达\n请检查服务端「媒体服务器」配置,下线的那台建议先停用';
+          // 指定了库所属服务器却用不上时不能说"不可达":类型不支持(如 Plex)
+          // 也会走到这里,分开提示才不至于误导。
+          final requested = _serverName?.trim() ?? '';
+          _error = requested.isNotEmpty
+              ? '库所属的「$requested」媒体服务器不可用\n请检查该服务器的地址与账号密码(内嵌播放支持 Emby / Jellyfin / 飞牛)'
+              : '媒体服务器不可达\n请检查服务端「媒体服务器」配置,下线的那台建议先停用';
+        });
+        return;
+      }
+      final service = PlayerLaunchController.to.serviceFor(kitServer);
+      if (service == null) {
+        setState(() {
+          _loading = false;
+          _error = kitServer.type == kit.ServerType.plex
+              ? '内嵌播放暂不支持 Plex\n请改用 Emby 或 Jellyfin'
+              : '当前媒体服务器配置不完整\n请检查账号密码,或改用 Emby / Jellyfin';
         });
         return;
       }
       setState(() {
         _server = kitServer;
-        _service = PlayerLaunchController.to.serviceFor(kitServer);
+        _service = service;
         _loading = false;
       });
     } catch (_) {
@@ -79,57 +94,92 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
     }
   }
 
-  /// 挑一台**确实在线**的媒体服务器。
+  /// 探测某台服务器下有哪些库；返回 null 表示该服务器不可用。
+  Future<List<String>?> _probeLibraries(ApiClient api, String serverName) async {
+    try {
+      final probe = await api.get<dynamic>(
+        '/api/v1/mediaserver/library?server=$serverName&hidden=true',
+      );
+      if ((probe.statusCode ?? 0) != 200) return null;
+      final data = probe.data;
+      dynamic list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map) {
+        list = data['value'] ?? data['data'];
+        if (list is Map) list = list['value'];
+      }
+      if (list is! List) return const [];
+      return list
+          .whereType<Map>()
+          .map((e) => (e['id'] ?? e['item_id'])?.toString())
+          .whereType<String>()
+          .toList();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 挑一台**确实在线、且目标库确实属于它**的媒体服务器。
   ///
   /// 背景(2026-10-10 v3 实测):v3 常同时配多台媒体服务器(如 jellyfin + emby),
   /// 其中一台下线时 MP 的代理接口会对它返回 502;而这里原先固定用第一台,
-  /// 结果「点击媒体库」直接加载失败。现在:**库所属服务器优先**(路由里的
-  /// serverName,其次按库名匹配),其余按启用顺序;先用 MP 的库列表接口探测
-  /// (2xx 视为在线),再构造 kit 服务器 —— 点哪台的库就打开哪台。
+  /// 结果「点击媒体库」直接加载失败。
+  ///
+  /// 2026-10-24 真机补充:路由里的 serverName 实际是 MP 的**服务端类型**
+  /// (emby / jellyfin / trimemedia),而服务器显示名可能是中文(飞牛)。只按
+  /// 名字匹配、匹配不上就静默换台,会拿 A 服务器的库 id 去查 B 服务器(Emby
+  /// 对不认识的父 id 返回默认列表),表现为**每个媒体库打开都一模一样**。
+  /// 现在:按名字或类型匹配候选,再用 MP 的库列表核对库归属;指定了服务器
+  /// 却用不上时直接失败,不再静默换台。
   Future<kit.MediaServer?> _pickReachableServer(
     List<MediaServer> servers,
   ) async {
     final launch = PlayerLaunchController.to;
-    final ordered = <MediaServer>[...servers];
-    final wantServer = _serverName;
-    final name = wantServer != null && wantServer.isNotEmpty
-        ? wantServer
-        : _libraryName;
-    if (name != null && name.isNotEmpty) {
-      final index = ordered.indexWhere((s) => s.name == name);
-      if (index > 0) {
-        ordered.insert(0, ordered.removeAt(index));
-      }
-    }
     final api = Get.find<ApiClient>();
-    for (final server in ordered) {
-      try {
-        final probe = await api.get<dynamic>(
-          '/api/v1/mediaserver/library?server=${server.name}',
-        );
-        if ((probe.statusCode ?? 0) != 200) continue;
-      } catch (_) {
-        continue;
+    final requested = _serverName?.trim().toLowerCase() ?? '';
+
+    final candidates = requested.isEmpty
+        ? <MediaServer>[...servers]
+        : servers
+            .where((s) =>
+                s.name.toLowerCase() == requested ||
+                s.type.toLowerCase() == requested)
+            .toList();
+    if (requested.isNotEmpty && candidates.isEmpty) return null;
+
+    for (final server in candidates) {
+      final ids = await _probeLibraries(api, server.name);
+      if (ids == null) continue; // 该服务器不可用
+      if (_libraryId != null &&
+          _libraryId!.isNotEmpty &&
+          ids.isNotEmpty &&
+          !ids.contains(_libraryId)) {
+        continue; // 目标库不在这台服务器下
       }
       final kitServer = await launch.toKitServer(server, isDefault: true);
-      if (kitServer != null) return kitServer;
+      if (kitServer == null) continue;
+      if (launch.serviceFor(kitServer) == null) continue; // 类型不支持/缺账号
+      return kitServer;
     }
     return null;
   }
 
-  /// kit 浏览网格点条目:有 TMDB 身份时打开 MP 媒体详情页(观感与 MP 一致),
+  /// kit 浏览网格点条目:优先打开 MP 媒体详情页(观感与 Emby/Jellyfin 一致),
   /// 同时携带媒体服务器条目上下文,详情页播放区可直连起播;返回 false 交给
-  /// kit 默认详情页(无 TMDB 映射的条目)。
-  bool _openItemDetail(kit.MediaItem item) {
+  /// kit 默认详情页。
+  ///
+  /// 飞牛条目不带 TMDB 标识(API 只给 imdb_id),所以无标识时先按
+  /// 标题+年份+类型查一次 MP 媒体身份,命中才跳 MP 详情页。
+  Future<bool> _openItemDetail(kit.MediaItem item) async {
     // 合集(BoxSet)交给播放器自己的合集详情页:它会列出合集内的影视。
     // 合集携带的是"合集级 TMDB 标识",拿它去查 MP 媒体详情会返回不完整数据
     // (2026-10-10 v3 真机实测:合集点进去显示「请求错误 · 媒体信息不完整」,
     //  而且会渲染出一个点了必然失败的播放入口)。
     if (item.isBoxSet) return false;
-    final tmdbId = item.tmdbId;
-    if (tmdbId == null || tmdbId <= 0) return false;
-    final pathKey = 'tmdb:$tmdbId';
-    PlayerLaunchController.to.resumeContexts[pathKey] = ResumeContext(
+    final path = await _resolveMediaPath(item);
+    if (path == null) return false;
+    PlayerLaunchController.to.resumeContexts[path] = ResumeContext(
       itemId: item.id,
       serverName: _server!.name,
       serverType: _server!.type.name,
@@ -138,11 +188,83 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
       isSeries: item.type == kit.MediaType.series,
     );
     Get.toNamed('/media-detail', parameters: {
-      'path': 'tmdb:$tmdbId',
+      'path': path,
       'title': item.title,
       'type_name': item.type == kit.MediaType.series ? '电视剧' : '电影',
+      if (item.year != null && item.year! > 0) 'year': '${item.year}',
     });
     return true;
+  }
+
+  /// 解析条目的 MP 媒体标识(如 tmdb:123)。
+  Future<String?> _resolveMediaPath(kit.MediaItem item) async {
+    final tmdbId = item.tmdbId;
+    if (tmdbId != null && tmdbId > 0) return 'tmdb:$tmdbId';
+    final title = item.title.trim();
+    if (title.isEmpty) return null;
+    try {
+      final api = Get.find<ApiClient>();
+      final resp = await api.get<dynamic>(
+        '/api/v1/media/search',
+        queryParameters: {'title': title, 'type': 'media', 'count': 20},
+      );
+      if ((resp.statusCode ?? 0) != 200) return null;
+      final data = resp.data;
+      dynamic list;
+      if (data is List) {
+        list = data;
+      } else if (data is Map) {
+        list = data['items'] ?? data['value'] ?? data['data'];
+        if (list is Map) list = list['items'] ?? list['value'];
+      }
+      if (list is! List) return null;
+      final wantType = item.type == kit.MediaType.series ? '电视剧' : '电影';
+      final wantTitle = _normalizeTitle(title);
+      final wantYear = item.year;
+      String? loose;
+      for (final raw in list) {
+        if (raw is! Map) continue;
+        final m = Map<String, dynamic>.from(raw);
+        final path = _mediaPathOf(m);
+        if (path == null) continue;
+        final type = (m['type'] ?? '').toString();
+        if (type.isNotEmpty && !type.contains(wantType)) continue;
+        final titles = <Object?>[m['title'], m['en_title'], m['original_title'], m['original_name']]
+            .whereType<Object>()
+            .map((e) => _normalizeTitle(e.toString()))
+            .toList();
+        final titleMatch = titles.contains(wantTitle);
+        final yearStr = (m['year'] ?? '').toString();
+        final year = int.tryParse(
+            yearStr.length >= 4 ? yearStr.substring(0, 4) : yearStr);
+        final yearMatch =
+            wantYear == null || year == null || (year - wantYear).abs() <= 1;
+        if (titleMatch && yearMatch) return path;
+        if (titleMatch && loose == null) loose = path;
+      }
+      return loose;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String _normalizeTitle(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'''[\s·:：\-—_.,，。!！?？"“”'‘’()（）\[\]【】]'''), '');
+
+  String? _mediaPathOf(Map<String, dynamic> m) {
+    final tmdb = m['tmdb_id'];
+    if (tmdb != null) {
+      final id = tmdb is num ? tmdb.toInt() : int.tryParse(tmdb.toString());
+      if (id != null && id > 0) return 'tmdb:$id';
+    }
+    final source = (m['media_source'] ?? '').toString().toLowerCase();
+    final mediaId = (m['media_id'] ?? '').toString();
+    if (mediaId.isEmpty) return null;
+    if (source == 'tmdb') return 'tmdb:$mediaId';
+    if (source == 'douban') return 'douban:$mediaId';
+    if (source == 'bangumi') return 'bangumi:$mediaId';
+    return null;
   }
 
   @override
