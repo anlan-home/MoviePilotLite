@@ -66,9 +66,21 @@ class _MediaLibraryBrowserPageState extends State<MediaLibraryBrowserPage> {
         });
         return;
       }
+      final service = PlayerLaunchController.to.serviceFor(kitServer);
+      if (service == null) {
+        setState(() {
+          _loading = false;
+          // 内嵌播放器只直连 Emby / Jellyfin(Plex 等类型没有对应实现)。
+          // 这里把限制说清楚,别让用户对着"加载失败"猜原因。
+          _error = kitServer.type == kit.ServerType.plex
+              ? '内嵌播放暂不支持 Plex\n请改用 Emby 或 Jellyfin'
+              : '当前媒体服务器配置不完整\n请检查账号密码,或改用 Emby / Jellyfin';
+        });
+        return;
+      }
       setState(() {
         _server = kitServer;
-        _service = PlayerLaunchController.to.serviceFor(kitServer);
+        _service = service;
         _loading = false;
       });
     } catch (_) {
